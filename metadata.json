@@ -1,0 +1,6 @@
+{
+  "name": "Dalani - Yemen Real Estate Platform",
+  "description": "Enterprise-grade real estate platform for Yemen with advanced search, interactive maps, and legal contract management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
