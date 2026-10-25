@@ -43,6 +43,9 @@ import {
   INITIAL_REPORTS,
   INITIAL_TICKETS,
   INITIAL_AUDIT_LOGS,
+  INITIAL_PROPERTY_REQUESTS,
+  INITIAL_PROPERTY_BOOKINGS,
+  INITIAL_PROPERTY_CONTRACTS,
   MOCK_USERS
 } from '../data/yemenData';
 
@@ -314,10 +317,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : ['list-101', 'list-103'];
   });
 
-  // Real Estate Requests & Temporary Bookings State
-  const [requests, setRequests] = useState<PropertyRequest[]>([]);
-  const [bookings, setBookings] = useState<PropertyBooking[]>([]);
-  const [contracts, setContracts] = useState<PropertyContract[]>([]);
+  // Real Estate Requests & Temporary Bookings State (Local Storage Persistent)
+  const [requests, setRequests] = useState<PropertyRequest[]>(() => {
+    try {
+      const saved = localStorage.getItem('dalani_requests');
+      return saved ? JSON.parse(saved) : INITIAL_PROPERTY_REQUESTS;
+    } catch {
+      return INITIAL_PROPERTY_REQUESTS;
+    }
+  });
+
+  const [bookings, setBookings] = useState<PropertyBooking[]>(() => {
+    try {
+      const saved = localStorage.getItem('dalani_bookings');
+      return saved ? JSON.parse(saved) : INITIAL_PROPERTY_BOOKINGS;
+    } catch {
+      return INITIAL_PROPERTY_BOOKINGS;
+    }
+  });
+
+  const [contracts, setContracts] = useState<PropertyContract[]>(() => {
+    try {
+      const saved = localStorage.getItem('dalani_contracts');
+      return saved ? JSON.parse(saved) : INITIAL_PROPERTY_CONTRACTS;
+    } catch {
+      return INITIAL_PROPERTY_CONTRACTS;
+    }
+  });
+
+  // Persistent LocalStorage Synchronization Effects
+  useEffect(() => {
+    try { localStorage.setItem('dalani_current_user', JSON.stringify(currentUser)); } catch (e) { console.warn(e); }
+  }, [currentUser]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_listings', JSON.stringify(listings)); } catch (e) { console.warn(e); }
+  }, [listings]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_requests', JSON.stringify(requests)); } catch (e) { console.warn(e); }
+  }, [requests]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_bookings', JSON.stringify(bookings)); } catch (e) { console.warn(e); }
+  }, [bookings]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_contracts', JSON.stringify(contracts)); } catch (e) { console.warn(e); }
+  }, [contracts]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_orgs', JSON.stringify(organizations)); } catch (e) { console.warn(e); }
+  }, [organizations]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_verifications', JSON.stringify(verificationRequests)); } catch (e) { console.warn(e); }
+  }, [verificationRequests]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_reports', JSON.stringify(reports)); } catch (e) { console.warn(e); }
+  }, [reports]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_tickets', JSON.stringify(tickets)); } catch (e) { console.warn(e); }
+  }, [tickets]);
+
+  useEffect(() => {
+    try { localStorage.setItem('dalani_favorites', JSON.stringify(favorites)); } catch (e) { console.warn(e); }
+  }, [favorites]);
 
   const [googleMapsApiKey, setGoogleMapsApiKeyState] = useState<string>(() => {
     return localStorage.getItem('dalani_gmaps_key') || (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) || '';

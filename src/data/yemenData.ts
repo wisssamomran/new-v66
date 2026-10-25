@@ -17,7 +17,10 @@ import {
   IntegrationService,
   SystemErrorLog,
   BackupSnapshot,
-  AdminEscalation
+  AdminEscalation,
+  PropertyRequest,
+  PropertyBooking,
+  PropertyContract
 } from '../types';
 
 export const YEMEN_GOVERNORATES: GovernorateData[] = [
@@ -1758,4 +1761,216 @@ export const INITIAL_ESCALATIONS: AdminEscalation[] = [
     submittedAt: '2026-10-17 09:30'
   }
 ];
+
+export const INITIAL_PROPERTY_REQUESTS: PropertyRequest[] = [
+  {
+    id: 'req-101',
+    requestNumber: 'REQ-2026-1001',
+    listingId: 'list-101',
+    listingTitle: 'شقة فاخرة للإيجار السكني في حدة',
+    listingNumber: 'YEM-2026-101',
+    listingPrice: 450000,
+    listingCurrency: 'YER',
+    listingImage: 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
+    listingGovernorate: 'صنعاء (أمانة العاصمة)',
+    seekerId: 'usr-seeker-1',
+    seekerName: 'أحمد العولقي',
+    seekerPhone: '778990011',
+    advertiserId: 'usr-advertiser-1',
+    advertiserName: 'المهندس خالد باعباد',
+    advertiserPhone: '777111222',
+    requestType: 'booking_intent',
+    status: 'accepted',
+    notes: 'طلب حجز مؤقت معاينة ميدانية وفحص عقد الإيجار',
+    offeredPrice: 450000,
+    preferredDate: '2026-10-26',
+    requestedDurationHours: 48,
+    bookingId: 'bk-201',
+    createdAt: '2026-10-20T10:00:00.000Z',
+    updatedAt: '2026-10-20T11:00:00.000Z'
+  },
+  {
+    id: 'req-102',
+    requestNumber: 'REQ-2026-1002',
+    listingId: 'list-103',
+    listingTitle: 'أرض تجارية استثمارية في خور مكسر',
+    listingNumber: 'YEM-2026-103',
+    listingPrice: 120000,
+    listingCurrency: 'USD',
+    listingImage: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=600&q=80',
+    listingGovernorate: 'عدن',
+    seekerId: 'usr-seeker-1',
+    seekerName: 'أحمد العولقي',
+    seekerPhone: '778990011',
+    advertiserId: 'usr-org-manager-1',
+    advertiserName: 'مكتب الصرح العقاري',
+    advertiserPhone: '773334455',
+    requestType: 'visit_inquiry',
+    status: 'pending',
+    notes: 'طلب مطابقة وفحص أصل البصيرة الشرعية لدى الأمين',
+    offeredPrice: 115000,
+    preferredDate: '2026-10-27',
+    requestedDurationHours: 72,
+    createdAt: '2026-10-24T14:30:00.000Z',
+    updatedAt: '2026-10-24T14:30:00.000Z'
+  }
+];
+
+export const INITIAL_PROPERTY_BOOKINGS: PropertyBooking[] = [
+  {
+    id: 'bk-201',
+    bookingNumber: 'BKG-2026-2001',
+    requestId: 'req-101',
+    listingId: 'list-101',
+    listingTitle: 'شقة فاخرة للإيجار السكني في حدة',
+    listingNumber: 'YEM-2026-101',
+    listingImage: 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
+    listingGovernorate: 'صنعاء (أمانة العاصمة)',
+    listingPrice: 450000,
+    listingCurrency: 'YER',
+    seekerId: 'usr-seeker-1',
+    seekerName: 'أحمد العولقي',
+    seekerPhone: '778990011',
+    advertiserId: 'usr-advertiser-1',
+    advertiserName: 'المهندس خالد باعباد',
+    advertiserPhone: '777111222',
+    status: 'active',
+    durationHours: 48,
+    startDate: '2026-10-20T11:00:00.000Z',
+    expiresAt: '2026-10-28T11:00:00.000Z',
+    confirmedBy: 'usr-advertiser-1',
+    dealStage: 'terms_negotiation',
+    contractId: 'cnt-301',
+    contractNumber: 'CNT-2026-1001',
+    notes: 'حجز حصري معتمد - المعاينة جارية وصياغة العقد قيد التفاوض',
+    paymentMethod: 'quarterly',
+    rentalUsageType: 'family',
+    inspectionVisit: {
+      status: 'completed',
+      confirmedAt: '2026-10-22T10:00:00.000Z',
+      completedAt: '2026-10-22T11:30:00.000Z',
+      resultNotes: 'تمت المعاينة الميدانية للشقة وتمت الموافقة المبدئية على الحالة العامة'
+    },
+    currentTerms: {
+      price: 450000,
+      currency: 'YER',
+      paymentMethod: 'quarterly',
+      specialConditions: ['سداد الإيجار مقدماً كل 3 أشهر', 'المحافظة على نظافة وسلامة الملحقات']
+    },
+    messages: [
+      {
+        id: 'msg-1',
+        bookingId: 'bk-201',
+        senderId: 'usr-seeker-1',
+        senderName: 'أحمد العولقي',
+        senderRole: 'seeker',
+        text: 'السلام عليكم، تم حجز الشات وتحديد الموعد. نأمل تأكيد شروط الإيجار.',
+        timestamp: '2026-10-20T11:15:00.000Z'
+      },
+      {
+        id: 'msg-2',
+        bookingId: 'bk-201',
+        senderId: 'usr-advertiser-1',
+        senderName: 'المهندس خالد باعباد',
+        senderRole: 'advertiser',
+        text: 'وعليكم السلام، الشروط جاهزة والعقد السكني مجهز للصياغة الرسمية.',
+        timestamp: '2026-10-20T12:00:00.000Z'
+      }
+    ],
+    createdAt: '2026-10-20T11:00:00.000Z',
+    updatedAt: '2026-10-24T16:00:00.000Z'
+  }
+];
+
+export const INITIAL_PROPERTY_CONTRACTS: PropertyContract[] = [
+  {
+    id: 'cnt-301',
+    contractNumber: 'CNT-2026-1001',
+    bookingId: 'bk-201',
+    bookingNumber: 'BKG-2026-2001',
+    listingId: 'list-101',
+    listingNumber: 'YEM-2026-101',
+    listingTitle: 'شقة فاخرة للإيجار السكني في حدة',
+    contractType: 'lease',
+    status: 'under_review',
+    currentVersion: 1,
+    firstParty: {
+      id: 'usr-advertiser-1',
+      name: 'المهندس خالد باعباد',
+      phone: '777111222',
+      role: 'lessor',
+      signatureStatus: 'signed',
+      signedAt: '2026-10-23T14:00:00.000Z'
+    },
+    secondParty: {
+      id: 'usr-seeker-1',
+      name: 'أحمد العولقي',
+      phone: '778990011',
+      role: 'lessee',
+      signatureStatus: 'pending'
+    },
+    propertySnapshot: {
+      title: 'شقة فاخرة في حدة',
+      propertyType: 'apartment',
+      purpose: 'rent',
+      governorate: 'صنعاء (أمانة العاصمة)',
+      city: 'صنعاء',
+      district: 'حدة',
+      area: 180,
+      areaUnit: 'م²'
+    },
+    financialTerms: {
+      totalAmount: 450000,
+      currency: 'YER',
+      paymentSchedule: 'quarterly',
+      securityDeposit: 450000
+    },
+    clauses: [
+      {
+        id: 'cl-1',
+        number: 1,
+        title: 'موضوع العقد والمنفعة',
+        content: 'يعتبر المؤجر قد أجر والمستأجر قد استأجر العقار الموضح أعلاه لغرض السكن العائلي فقط.',
+        isMandatory: true
+      },
+      {
+        id: 'cl-2',
+        number: 2,
+        title: 'مدة العقد وتاريخ التسليم',
+        content: 'مدة الإيجار سنة كاملة تبدأ من تاريخ التسليم المعتمد 2026-11-01 وتتجدد باتفاق الطرفين.',
+        isMandatory: true
+      },
+      {
+        id: 'cl-3',
+        number: 3,
+        title: 'الأجرة ووسيلة الدفع',
+        content: 'الأجرة الشهرية 450,000 ريال يمني تدفع مقدماً كل ثلاثة أشهر.',
+        isMandatory: true
+      }
+    ],
+    versionHistory: [
+      {
+        version: 1,
+        createdAt: '2026-10-23T10:00:00.000Z',
+        createdBy: {
+          id: 'usr-advertiser-1',
+          name: 'المهندس خالد باعباد',
+          role: 'advertiser'
+        },
+        summaryOfChanges: 'الإصدار الأول للعقد الإيجاري الموحد',
+        clauses: [],
+        financialTerms: {
+          totalAmount: 450000,
+          currency: 'YER',
+          paymentSchedule: 'quarterly',
+          depositAmount: 450000
+        },
+        status: 'under_review'
+      }
+    ],
+    createdAt: '2026-10-23T10:00:00.000Z',
+    updatedAt: '2026-10-23T14:00:00.000Z'
+  }
+];
+
 
