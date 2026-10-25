@@ -22,6 +22,7 @@ import { FavoritesPage } from './pages/FavoritesPage';
 import { MyAccountPage } from './pages/MyAccountPage';
 import { BookingsManagementPage } from './pages/BookingsManagementPage';
 import { DalaniAiAssistantModal } from './components/DalaniAiAssistantModal';
+import { AppPermissionsModal } from './components/AppPermissionsModal';
 import { Listing } from './types';
 import { CheckCircle2, AlertCircle, Info, XCircle } from 'lucide-react';
 
@@ -103,6 +104,9 @@ const AppContent: React.FC = () => {
       return sessionStorage.getItem('dalani_visitor_gate_title') || 'تسجيل الدخول مطلوب';
     } catch { return 'تسجيل الدخول مطلوب'; }
   });
+
+  // Permissions Modal State
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState<boolean>(false);
 
   // AI Assistant Modal State
   const [aiModalOpen, setAiModalOpen] = useState(() => {
@@ -368,6 +372,7 @@ const AppContent: React.FC = () => {
           <MyAccountPage
             onNavigate={handleNavigate}
             onOpenAuth={handleOpenAuth}
+            onOpenPermissions={() => setPermissionsModalOpen(true)}
           />
         )}
 
@@ -419,6 +424,12 @@ const AppContent: React.FC = () => {
         onClose={handleCloseAiModal}
         currentView={currentView}
         onNavigate={handleNavigate}
+      />
+
+      {/* App Permissions Management Modal (Location, Microphone, Camera, Calls) */}
+      <AppPermissionsModal
+        isOpen={permissionsModalOpen}
+        onClose={() => setPermissionsModalOpen(false)}
       />
 
       {/* Global Toast Notifications Container (Positioned top-left to avoid blocking AI button) */}

@@ -44,11 +44,13 @@ import {
 interface MyAccountPageProps {
   onNavigate: (view: string, params?: any) => void;
   onOpenAuth: (mode: 'login' | 'register') => void;
+  onOpenPermissions?: () => void;
 }
 
 export const MyAccountPage: React.FC<MyAccountPageProps> = ({
   onNavigate,
-  onOpenAuth
+  onOpenAuth,
+  onOpenPermissions
 }) => {
   const {
     currentUser,
@@ -524,6 +526,16 @@ export const MyAccountPage: React.FC<MyAccountPageProps> = ({
                   <Grid className="w-3.5 h-3.5 text-[#12A889]" />
                   <span>إعلاناتي ({myListingsCount})</span>
                 </button>
+
+                {onOpenPermissions && (
+                  <button
+                    onClick={onOpenPermissions}
+                    className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-amber-600" />
+                    <span>صلاحيات أندرويد 📱</span>
+                  </button>
+                )}
               </div>
 
             </div>
