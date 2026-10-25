@@ -30,11 +30,28 @@ const AppContent: React.FC = () => {
 
   const [currentView, setCurrentView] = useState<string>(() => {
     try {
+      const hash = window.location.hash.replace(/^#\/?/, '').trim();
+      if (hash) return hash;
       return sessionStorage.getItem('dalani_current_view') || 'home';
     } catch {
       return 'home';
     }
   });
+
+  // Keep hash and currentView in sync
+  React.useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '').trim();
+      if (hash && hash !== currentView) {
+        setCurrentView(hash);
+        try {
+          sessionStorage.setItem('dalani_current_view', hash);
+        } catch {}
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [currentView]);
 
   const [selectedListing, setSelectedListing] = useState<Listing | null>(() => {
     try {
@@ -168,6 +185,9 @@ const AppContent: React.FC = () => {
     }
     try {
       sessionStorage.setItem('dalani_current_view', view);
+      if (window.location.hash !== `#/${view}`) {
+        window.history.replaceState(null, '', `#/${view}`);
+      }
     } catch {}
     setCurrentView(view);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -178,6 +198,7 @@ const AppContent: React.FC = () => {
     try {
       sessionStorage.setItem('dalani_selected_listing', JSON.stringify(listing));
       sessionStorage.setItem('dalani_current_view', 'listing_details');
+      window.history.replaceState(null, '', '#/listing_details');
     } catch {}
     setCurrentView('listing_details');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -187,8 +208,17 @@ const AppContent: React.FC = () => {
     const created = listings.find(l => l.id === listingId);
     if (created) {
       setSelectedListing(created);
+      try {
+        sessionStorage.setItem('dalani_selected_listing', JSON.stringify(created));
+        sessionStorage.setItem('dalani_current_view', 'listing_details');
+        window.history.replaceState(null, '', '#/listing_details');
+      } catch {}
       setCurrentView('listing_details');
     } else {
+      try {
+        sessionStorage.setItem('dalani_current_view', 'my_ads');
+        window.history.replaceState(null, '', '#/my_ads');
+      } catch {}
       setCurrentView('my_ads');
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });

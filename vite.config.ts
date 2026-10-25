@@ -3,9 +3,51 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+function preventDataReloadPlugin() {
+  return {
+    name: 'prevent-data-reload',
+    configureServer(server: any) {
+      const origSend = server.ws.send;
+      server.ws.send = function(...args: any[]) {
+        const payload = args[0];
+        if (payload && payload.type === 'full-reload') {
+          const pathStr = (payload.path || '').replace(/\\/g, '/');
+          if (
+            !pathStr ||
+            pathStr === '*' ||
+            pathStr.includes('_dalani_store_') ||
+            pathStr.includes('.dalani_cache') ||
+            pathStr.includes('.json') ||
+            pathStr.includes('database') ||
+            pathStr.includes('.data') ||
+            pathStr.includes('backups')
+          ) {
+            return;
+          }
+        }
+        return origSend.apply(this, args);
+      };
+    },
+    handleHotUpdate({ file }: { file: string }) {
+      const normalized = file.replace(/\\/g, '/');
+      if (
+        normalized.includes('_dalani_store_') ||
+        normalized.includes('.dalani_cache') ||
+        normalized.includes('.data') ||
+        normalized.endsWith('.json') ||
+        normalized.includes('database') ||
+        normalized.includes('backups') ||
+        normalized.includes('.env')
+      ) {
+        return [];
+      }
+    }
+  };
+}
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), preventDataReloadPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),
@@ -22,17 +64,21 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? {
         ignored: ['**']
       } : {
-        usePolling: true,
-        interval: 1000,
-        ignored: [
-          '**/.data/**',
-          '**/_dalani_store_/**',
-          '**/dalani_database.json',
-          '**/*.json',
-          '**/.git/**',
-          '**/tmp/**',
-          '**/.aistudio/**'
-        ]
+        usePolling: false,
+        ignored: (filePath: string) => {
+          const normalized = filePath.replace(/\\/g, '/');
+          return (
+            normalized.includes('/_dalani_store_/') ||
+            normalized.includes('_dalani_store_') ||
+            normalized.includes('/.dalani_cache/') ||
+            normalized.includes('.dalani_cache') ||
+            normalized.includes('/.data/') ||
+            normalized.includes('/node_modules/') ||
+            normalized.includes('/.git/') ||
+            normalized.includes('/backups/') ||
+            normalized.endsWith('.json')
+          );
+        }
       },
     },
   };

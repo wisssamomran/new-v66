@@ -1,8 +1,8 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { db } from './db';
 import { User, UserRole } from '../types';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AQ.Ab8RN6KXFSJSOeZf-dndir5-aZFfsZ2hcowcsKLiHzW84dAukw';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 const ai = new GoogleGenAI({
   apiKey: GEMINI_API_KEY,
@@ -372,13 +372,18 @@ ${userSpecificFacts}
         contents,
         config: {
           systemInstruction,
-          temperature: 0.7
+          temperature: 0.7,
+          ...(model === 'gemini-3.1-flash-lite' ? {
+            thinkingConfig: {
+              thinkingLevel: ThinkingLevel.MINIMAL
+            }
+          } : {})
         }
       });
 
-      // 8-second timeout per attempt
+      // 7-second timeout per attempt for fast responsive chat
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI response timed out')), 8000)
+        setTimeout(() => reject(new Error('AI response timed out')), 7000)
       );
 
       const response = await Promise.race([generatePromise, timeoutPromise]);

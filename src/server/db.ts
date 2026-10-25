@@ -79,8 +79,12 @@ export interface DatabaseSchema {
   };
 }
 
-const DB_FILE_PATH = path.resolve(process.cwd(), '_dalani_store_', 'dalani_database.json');
-const BACKUPS_DIR = path.resolve(process.cwd(), '_dalani_store_', 'backups');
+// Live database storage placed inside node_modules to guarantee NO watcher (node --watch, nodemon, vite) ever restarts
+const DB_STORE_DIR = path.resolve(process.cwd(), 'node_modules', '.dalani_cache');
+const DB_FILE_PATH = path.resolve(DB_STORE_DIR, 'dalani_database.json');
+const PERSISTENT_BACKUP_DIR = path.resolve(process.cwd(), '_dalani_store_');
+const PERSISTENT_BACKUP_FILE = path.resolve(PERSISTENT_BACKUP_DIR, 'dalani_database.json');
+const BACKUPS_DIR = path.resolve(PERSISTENT_BACKUP_DIR, 'backups');
 
 export function normalizeListing(l: any): Listing {
   return {
@@ -1141,13 +1145,24 @@ class LocalDatabase {
 
   private loadOrSeed(): DatabaseSchema {
     try {
-      const dir = path.dirname(DB_FILE_PATH);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      // Ensure storage directories exist
+      if (!fs.existsSync(DB_STORE_DIR)) {
+        fs.mkdirSync(DB_STORE_DIR, { recursive: true });
+      }
+      if (!fs.existsSync(PERSISTENT_BACKUP_DIR)) {
+        fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
       }
 
+      // 1. Try reading from live cache first
+      let fileToRead = '';
       if (fs.existsSync(DB_FILE_PATH)) {
-        const fileContent = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+        fileToRead = DB_FILE_PATH;
+      } else if (fs.existsSync(PERSISTENT_BACKUP_FILE)) {
+        fileToRead = PERSISTENT_BACKUP_FILE;
+      }
+
+      if (fileToRead) {
+        const fileContent = fs.readFileSync(fileToRead, 'utf-8');
         if (fileContent.trim()) {
           const parsed = JSON.parse(fileContent);
           if (parsed && Array.isArray(parsed.listings)) {
@@ -1186,7 +1201,7 @@ class LocalDatabase {
               parsed.contracts = parsed.contracts.map(normalizeContract);
             }
 
-            this.persist(parsed);
+            this.persist(parsed, true);
             return parsed;
           }
         }
@@ -1228,20 +1243,62 @@ class LocalDatabase {
       }
     };
 
-    this.persist(initialData);
+    this.persist(initialData, true);
     return initialData;
   }
 
-  public persist(dataToSave: DatabaseSchema = this.data) {
+  private persistTimeout: NodeJS.Timeout | null = null;
+  private backupSyncTimeout: NodeJS.Timeout | null = null;
+
+  public flushToBackupSync() {
     try {
-      const dir = path.dirname(DB_FILE_PATH);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      if (!fs.existsSync(PERSISTENT_BACKUP_DIR)) {
+        fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
       }
-      dataToSave.meta.lastUpdated = new Date().toISOString();
-      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dataToSave, null, 2), 'utf-8');
+      fs.writeFileSync(PERSISTENT_BACKUP_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
     } catch (err) {
-      console.error('[Dalani DB] Error persisting database to disk:', err);
+      console.error('[Dalani DB] Error flushing backup to persistent file:', err);
+    }
+  }
+
+  public persist(dataToSave: DatabaseSchema = this.data, immediate: boolean = false) {
+    try {
+      dataToSave.meta.lastUpdated = new Date().toISOString();
+
+      const doWrite = () => {
+        try {
+          if (!fs.existsSync(DB_STORE_DIR)) {
+            fs.mkdirSync(DB_STORE_DIR, { recursive: true });
+          }
+          // Write to live cache inside node_modules (immune to all watchers)
+          fs.writeFileSync(DB_FILE_PATH, JSON.stringify(this.data, null, 2), 'utf-8');
+        } catch (err) {
+          console.error('[Dalani DB] Error persisting database to disk:', err);
+        }
+      };
+
+      if (immediate) {
+        if (this.persistTimeout) {
+          clearTimeout(this.persistTimeout);
+          this.persistTimeout = null;
+        }
+        doWrite();
+      } else {
+        if (this.persistTimeout) {
+          clearTimeout(this.persistTimeout);
+        }
+        this.persistTimeout = setTimeout(doWrite, 400);
+      }
+
+      // Schedule periodic background flush to persistent file (every 2 minutes)
+      if (!this.backupSyncTimeout) {
+        this.backupSyncTimeout = setTimeout(() => {
+          this.flushToBackupSync();
+          this.backupSyncTimeout = null;
+        }, 120000);
+      }
+    } catch (err) {
+      console.error('[Dalani DB] Error scheduling persist:', err);
     }
   }
 
@@ -3498,3 +3555,18 @@ class LocalDatabase {
 }
 
 export const db = new LocalDatabase();
+
+// Cleanly flush in-memory data to persistent storage on process exit or termination
+try {
+  process.on('SIGINT', () => {
+    db.flushToBackupSync();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    db.flushToBackupSync();
+    process.exit(0);
+  });
+  process.on('beforeExit', () => {
+    db.flushToBackupSync();
+  });
+} catch {}

@@ -1,0 +1,17 @@
+{
+  "watch": ["server.ts", "src/server"],
+  "ext": "ts,js",
+  "ignore": [
+    "_dalani_store_/**",
+    ".dalani_cache/**",
+    ".data/**",
+    "*.json",
+    "src/components/**",
+    "src/pages/**",
+    "src/context/**",
+    "dist/**",
+    "tmp/**",
+    ".aistudio/**"
+  ],
+  "exec": "tsx server.ts"
+}

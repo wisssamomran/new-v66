@@ -3678,6 +3678,48 @@ async function startServer() {
     // In development mode, dynamically hook Vite middlewares into Express
     const { createServer } = await import('vite');
     const vite = await createServer({
+      plugins: [
+        {
+          name: 'prevent-data-reload',
+          configureServer(server) {
+            // Intercept ws.send to prevent full-page reload on data or json writes
+            const origSend = server.ws.send.bind(server.ws);
+            server.ws.send = function(first: any, second?: any) {
+              const payload = typeof first === 'object' ? first : second;
+              if (payload && payload.type === 'full-reload') {
+                const pathStr = (payload.path || '').replace(/\\/g, '/');
+                if (
+                  !pathStr ||
+                  pathStr === '*' ||
+                  pathStr.includes('_dalani_store_') ||
+                  pathStr.includes('.dalani_cache') ||
+                  pathStr.includes('.json') ||
+                  pathStr.includes('database') ||
+                  pathStr.includes('.data') ||
+                  pathStr.includes('backups')
+                ) {
+                  return;
+                }
+              }
+              return (origSend as any)(first, second);
+            };
+          },
+          handleHotUpdate({ file }: { file: string }) {
+            const normalized = file.replace(/\\/g, '/');
+            if (
+              normalized.includes('_dalani_store_') ||
+              normalized.includes('.dalani_cache') ||
+              normalized.includes('.data') ||
+              normalized.endsWith('.json') ||
+              normalized.includes('database') ||
+              normalized.includes('backups') ||
+              normalized.includes('.env')
+            ) {
+              return [];
+            }
+          }
+        }
+      ],
       server: {
         middlewareMode: true,
         host: '0.0.0.0',
@@ -3688,20 +3730,21 @@ async function startServer() {
         watch: process.env.DISABLE_HMR === 'true' ? {
           ignored: ['**']
         } : {
-          usePolling: true,
-          interval: 1000,
-          ignored: [
-            '**/node_modules/**',
-            '**/_dalani_store_/**',
-            '**/_dalani_store_/*',
-            '**/dalani_database.json',
-            '**/*.json',
-            '**/.git/**',
-            '**/tmp/**',
-            '**/.aistudio/**',
-            path.resolve(process.cwd(), '_dalani_store_'),
-            path.resolve(process.cwd(), '_dalani_store_', 'dalani_database.json')
-          ]
+          usePolling: false,
+          ignored: (filePath: string) => {
+            const normalized = filePath.replace(/\\/g, '/');
+            return (
+              normalized.includes('/_dalani_store_/') ||
+              normalized.includes('_dalani_store_') ||
+              normalized.includes('/.dalani_cache/') ||
+              normalized.includes('.dalani_cache') ||
+              normalized.includes('/.data/') ||
+              normalized.includes('/node_modules/') ||
+              normalized.includes('/.git/') ||
+              normalized.includes('/backups/') ||
+              normalized.endsWith('.json')
+            );
+          }
         }
       },
       appType: 'spa'

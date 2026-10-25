@@ -40,16 +40,54 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
 }) => {
   const { currentUser, showToast } = useApp();
 
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const stored = sessionStorage.getItem(`dalani_ai_messages_${currentUser.id}`) || localStorage.getItem(`dalani_ai_messages_${currentUser.id}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [quickPrompts, setQuickPrompts] = useState<string[]>([]);
   const [contextBadge, setContextBadge] = useState<string>('');
   const [roleTitle, setRoleTitle] = useState<string>('');
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem(`dalani_ai_messages_${currentUser.id}`) || localStorage.getItem(`dalani_ai_messages_${currentUser.id}`);
+      return Boolean(stored && JSON.parse(stored).length > 0);
+    } catch {
+      return false;
+    }
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Restore messages whenever currentUser.id changes
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(`dalani_ai_messages_${currentUser.id}`) || localStorage.getItem(`dalani_ai_messages_${currentUser.id}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          setIsInitialized(true);
+        }
+      }
+    } catch {}
+  }, [currentUser.id]);
+
+  // Sync messages to local and session storage
+  useEffect(() => {
+    if (messages.length > 0) {
+      try {
+        sessionStorage.setItem(`dalani_ai_messages_${currentUser.id}`, JSON.stringify(messages));
+        localStorage.setItem(`dalani_ai_messages_${currentUser.id}`, JSON.stringify(messages));
+      } catch {}
+    }
+  }, [messages, currentUser.id]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,30 +129,32 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
           setContextBadge(data.greeting.contextBadge || '');
           setQuickPrompts(data.greeting.quickPrompts || []);
 
-          // Only set initial greeting if messages are empty or after role switch
-          if (messages.length === 0 || !isInitialized) {
-            setMessages([
-              {
-                id: `msg-welcome-${Date.now()}`,
-                role: 'assistant',
-                content: data.greeting.greetingMessage,
-                timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
-              }
-            ]);
+          // Only set initial greeting if messages are truly empty
+          if (messages.length === 0 && !isInitialized) {
+            const welcomeMsg: Message = {
+              id: `msg-welcome-${Date.now()}`,
+              role: 'assistant',
+              content: data.greeting.greetingMessage,
+              timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
+            };
+            setMessages([welcomeMsg]);
             setIsInitialized(true);
+            try {
+              sessionStorage.setItem(`dalani_ai_messages_${currentUser.id}`, JSON.stringify([welcomeMsg]));
+            } catch {}
           }
         }
       } catch (err) {
         console.error('Greeting fetch error:', err);
-        if (messages.length === 0 && isMounted) {
-          setMessages([
-            {
-              id: `msg-fallback-${Date.now()}`,
-              role: 'assistant',
-              content: `أهلاً بك يا **${currentUser.name}** في منصة دلنّي العقارية 🇾🇪!\nأنا مساعدك الذكي ومستعد لمساعدتك في أي استفسار أو حل أي مشكلة وتوجيهك لأي قسم بالمنصة وفق صلاحياتك.`,
-              timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
-            }
-          ]);
+        if (messages.length === 0 && !isInitialized && isMounted) {
+          const fallbackMsg: Message = {
+            id: `msg-fallback-${Date.now()}`,
+            role: 'assistant',
+            content: `أهلاً بك يا **${currentUser.name}** في منصة دلنّي العقارية 🇾🇪!\nأنا مساعدك الذكي ومستعد لمساعدتك في أي استفسار أو حل أي مشكلة وتوجيهك لأي قسم بالمنصة وفق صلاحياتك.`,
+            timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
+          };
+          setMessages([fallbackMsg]);
+          setIsInitialized(true);
         }
       }
     }
@@ -124,7 +164,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, currentUser.role, currentUser.id, currentView]);
+  }, [isOpen, currentUser.role, currentUser.id, currentView, isInitialized, messages.length]);
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputValue).trim();
@@ -201,6 +241,10 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
   const handleResetChat = () => {
     setMessages([]);
     setIsInitialized(false);
+    try {
+      sessionStorage.removeItem(`dalani_ai_messages_${currentUser.id}`);
+      localStorage.removeItem(`dalani_ai_messages_${currentUser.id}`);
+    } catch {}
     showToast('تمت إعادة ضبط جلسة المحادثة', 'info');
   };
 
@@ -233,6 +277,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
       parts.push(
         <div key={`go-${match.index}`} className="my-2.5">
           <button
+            type="button"
             onClick={() => handleNavigateFromAi(targetView, linkTitle)}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#12A889] to-[#0F2942] text-white text-xs font-bold shadow-md hover:shadow-lg hover:brightness-110 active:scale-95 transition-all duration-200 cursor-pointer"
           >
@@ -385,6 +430,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
 
           <div className="flex items-center gap-1">
             <button
+              type="button"
               onClick={handleResetChat}
               title="إعادة ضبط المحادثة"
               className="p-1.5 rounded-xl hover:bg-white/10 text-white/80 hover:text-white transition duration-200"
@@ -392,6 +438,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
               <RotateCcw className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={onClose}
               title="إغلاق"
               className="p-1.5 rounded-xl hover:bg-white/10 text-white/80 hover:text-white transition duration-200"
@@ -445,6 +492,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
                   <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap gap-1.5">
                     {msg.navigationSuggestions.map((item, idx) => (
                       <button
+                        type="button"
                         key={idx}
                         onClick={() => handleNavigateFromAi(item.view, item.title)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-[#12A889] text-[11px] font-bold border border-teal-200 transition-colors"
@@ -504,6 +552,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
           </span>
           {quickPrompts.slice(0, 4).map((prompt, idx) => (
             <button
+              type="button"
               key={idx}
               onClick={() => handleSendMessage(prompt)}
               className="text-[11px] font-medium bg-white hover:bg-teal-50 text-slate-700 hover:text-teal-800 border border-slate-200 hover:border-teal-300 px-2.5 py-1 rounded-full whitespace-nowrap transition duration-150 shadow-2xs active:scale-95"
@@ -519,6 +568,7 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
         <form
           onSubmit={e => {
             e.preventDefault();
+            e.stopPropagation();
             handleSendMessage();
           }}
           className="flex items-center gap-2"
