@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { generateClientAiResponse, generateClientAiResponseAsync } from '../utils/clientAiEngine';
 import {
   Sparkles,
   Send,
@@ -187,50 +188,70 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
         text: m.content
       }));
 
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-role': currentUser.role,
-          'x-user-id': currentUser.id,
-          'x-user-name': encodeURIComponent(currentUser.name)
-        },
-        body: JSON.stringify({
-          message: text,
-          history: historyPayload,
-          currentView
-        })
-      });
+      let data: any = null;
+      try {
+        const res = await fetch('/api/ai/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-role': currentUser.role,
+            'x-user-id': currentUser.id,
+            'x-user-name': encodeURIComponent(currentUser.name)
+          },
+          body: JSON.stringify({
+            message: text,
+            history: historyPayload,
+            currentView
+          })
+        });
 
-      if (!res.ok) {
-        throw new Error('فشل الرد من خادم الذكاء الاصطناعي');
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          data = await res.json();
+        }
+      } catch (e) {
+        console.warn('[Dalani AI] Network fetch failed, falling back to local AI engine:', e);
       }
 
-      const data = await res.json();
-      const assistantMessage: Message = {
-        id: `msg-ai-${Date.now()}`,
-        role: 'assistant',
-        content: data.response || 'عذراً، لم أتمكن من الحصول على رد محدد.',
-        timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
-        modelUsed: data.modelUsed,
-        navigationSuggestions: data.navigationSuggestions
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
+      // If backend server returned valid JSON, use it; otherwise use client AI engine with direct Gemini API key support
+      if (data && data.success && data.response) {
+        const assistantMessage: Message = {
+          id: `msg-ai-${Date.now()}`,
+          role: 'assistant',
+          content: data.response,
+          timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
+          modelUsed: data.modelUsed,
+          navigationSuggestions: data.navigationSuggestions
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      } else {
+        const clientResult = await generateClientAiResponseAsync(currentUser, text, historyPayload, currentView);
+        const assistantMessage: Message = {
+          id: `msg-ai-${Date.now()}`,
+          role: 'assistant',
+          content: clientResult.text,
+          timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
+          modelUsed: clientResult.modelUsed,
+          navigationSuggestions: clientResult.navigationSuggestions
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      }
     } catch (err: any) {
       console.error('AI chat error:', err);
+      const historyPayload = messages.slice(-6).map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        text: m.content
+      }));
+      const clientResult = await generateClientAiResponseAsync(currentUser, text, historyPayload, currentView);
       setMessages(prev => [
         ...prev,
         {
-          id: `msg-err-${Date.now()}`,
+          id: `msg-ai-${Date.now()}`,
           role: 'assistant',
-          content: 'عذراً، حدث انقطاع مؤقت في الاتصال بنموذج الذكاء الاصطناعي. يمكنك استخدام الروابط السريعة أدناه للوصول لأي شاشة:',
+          content: clientResult.text,
           timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
-          navigationSuggestions: [
-            { view: 'search', title: 'البحث والخريطة' },
-            { view: 'my_ads', title: 'إدارة إعلاناتي' },
-            { view: 'bookings', title: 'الحجوزات والصفقات' }
-          ]
+          modelUsed: clientResult.modelUsed,
+          navigationSuggestions: clientResult.navigationSuggestions
         }
       ]);
     } finally {
