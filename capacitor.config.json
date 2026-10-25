@@ -1,0 +1,6 @@
+{
+  "appId": "com.dalani.app",
+  "appName": "DLNE",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
