@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { handleLocalApiCall } from '../services/localApi';
 import {
   Listing,
   User,
@@ -437,7 +438,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [reportsSummary, setReportsSummary] = useState<any>(null);
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
 
-  // Helper for authenticated server requests
+  // Helper for authenticated standalone/network requests
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     const headers = {
       'Content-Type': 'application/json',
@@ -446,11 +447,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...(options.headers || {})
     };
     try {
+      // First attempt local in-app handler for offline standalone operation
+      const localRes = await handleLocalApiCall(url, { ...options, headers }, currentUser);
+      if (localRes) return localRes;
       const res = await fetch(url, { ...options, headers });
       return res;
-    } catch (err) {
-      console.warn(`[Dalani API] Network error for ${url}:`, err);
-      return null;
+    } catch {
+      return handleLocalApiCall(url, { ...options, headers }, currentUser);
     }
   }, [currentUser]);
 

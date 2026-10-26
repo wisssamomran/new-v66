@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { db } from './src/server/db';
+import { runAutoMigrationAndSeeding } from './src/db/migrateAndSeed';
 import { buildInitialGreeting, generateAiAssistantResponse } from './src/server/aiAssistant';
 import {
   authMiddleware,
@@ -51,7 +52,18 @@ const app = express();
 // Port 3000 & iFrame: Dev server must run on port 3000. Do not inherit external container PORT (e.g. 8080 used by Nginx).
 const PORT = 3000;
 
-// Body Parsers & CORS/Headers
+// CORS & Headers Middleware for Capacitor Mobile App and External Clients
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role, x-user-id, x-session-id');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Body Parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -3673,6 +3685,17 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
+
+  // Run database migration and initial seeding
+  try {
+    const migration = await runAutoMigrationAndSeeding();
+    console.log('[Dalani Startup] Auto-migration result:', migration.message);
+    if (migration.usingPostgres) {
+      await db.loadFromPostgres();
+    }
+  } catch (err) {
+    console.error('[Dalani Startup] Error during database auto-migration:', err);
+  }
 
   if (!isProduction) {
     // In development mode, dynamically hook Vite middlewares into Express

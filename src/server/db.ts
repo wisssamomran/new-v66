@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { db as pgDb, schema, checkPostgresConnection } from '../db';
+import { eq } from 'drizzle-orm';
 import {
   Listing,
   Organization,
@@ -1302,6 +1304,314 @@ class LocalDatabase {
     }
   }
 
+  // --- PostgreSQL Data Loading & Syncing ---
+  public async loadFromPostgres(): Promise<boolean> {
+    if (!pgDb) return false;
+    try {
+      const isConnected = await checkPostgresConnection();
+      if (!isConnected) return false;
+
+      console.log('[Dalani DB] Loading state from Supabase PostgreSQL via Drizzle ORM...');
+      const users = await pgDb.select().from(schema.usersTable);
+      if (users.length > 0) {
+        this.data.users = users.map(u => ({
+          id: u.id,
+          name: u.name,
+          role: u.role as UserRole,
+          email: u.email || undefined,
+          phone: u.phone || '+967 770 000 000',
+          phoneVerified: u.phoneVerified ?? true,
+          avatarUrl: u.avatarUrl || undefined,
+          orgId: u.orgId || undefined,
+          orgName: u.orgName || undefined,
+          activeStatus: u.activeStatus ?? true,
+          createdAt: u.createdAt || new Date().toISOString()
+        }));
+      }
+
+      const listings = await pgDb.select().from(schema.listingsTable);
+      if (listings.length > 0) {
+        this.data.listings = listings.map(l => normalizeListing({
+          ...l,
+          isNegotiable: Boolean(l.isNegotiable),
+          isReserved: Boolean(l.isReserved)
+        }));
+      }
+
+      const requests = await pgDb.select().from(schema.propertyRequestsTable);
+      if (requests.length > 0) {
+        this.data.requests = requests as any;
+      }
+
+      const bookings = await pgDb.select().from(schema.propertyBookingsTable);
+      if (bookings.length > 0) {
+        this.data.bookings = bookings.map(b => normalizeBooking(b as any));
+      }
+
+      const contracts = await pgDb.select().from(schema.propertyContractsTable);
+      if (contracts.length > 0) {
+        this.data.contracts = contracts.map(c => normalizeContract(c as any));
+      }
+
+      const verifications = await pgDb.select().from(schema.verificationRequestsTable);
+      if (verifications.length > 0) {
+        this.data.verifications = verifications as any;
+      }
+
+      const reports = await pgDb.select().from(schema.reportsTable);
+      if (reports.length > 0) {
+        this.data.reports = reports as any;
+      }
+
+      const tickets = await pgDb.select().from(schema.supportTicketsTable);
+      if (tickets.length > 0) {
+        this.data.tickets = tickets as any;
+      }
+
+      const auditLogs = await pgDb.select().from(schema.auditLogsTable);
+      if (auditLogs.length > 0) {
+        this.data.auditLogs = auditLogs as any;
+      }
+
+      this.syncListingsReservationStatus();
+      console.log('[Dalani DB] Synchronized in-memory store with PostgreSQL database state.');
+      return true;
+    } catch (err) {
+      console.warn('[Dalani DB] Failed to load data from PostgreSQL:', err);
+      return false;
+    }
+  }
+
+  private syncPgListing(listing: Listing) {
+    if (!pgDb) return;
+    pgDb.insert(schema.listingsTable).values({
+      id: listing.id,
+      listingNumber: listing.listingNumber || `YEM-${listing.id}`,
+      title: listing.title,
+      description: listing.description || '',
+      propertyType: listing.propertyType,
+      purpose: listing.purpose,
+      status: listing.status,
+      price: listing.price || 0,
+      currency: listing.currency || 'YER',
+      isNegotiable: Boolean(listing.isNegotiable),
+      area: listing.area || 0,
+      areaUnit: listing.areaUnit || 'م²',
+      isReserved: Boolean(listing.isReserved),
+      viewsCount: listing.viewsCount || 0,
+      favoritesCount: listing.favoritesCount || 0,
+      location: listing.location || null,
+      attributes: listing.attributes || null,
+      advertiser: listing.advertiser || null,
+      verificationBadges: listing.verificationBadges || [],
+      statusTimeline: listing.statusTimeline || [],
+      createdAt: listing.createdAt || new Date().toISOString(),
+      updatedAt: listing.updatedAt || new Date().toISOString()
+    }).onConflictDoUpdate({
+      target: schema.listingsTable.id,
+      set: {
+        title: listing.title,
+        description: listing.description || '',
+        status: listing.status,
+        price: listing.price || 0,
+        currency: listing.currency || 'YER',
+        isNegotiable: Boolean(listing.isNegotiable),
+        area: listing.area || 0,
+        isReserved: Boolean(listing.isReserved),
+        viewsCount: listing.viewsCount || 0,
+        favoritesCount: listing.favoritesCount || 0,
+        location: listing.location || null,
+        attributes: listing.attributes || null,
+        verificationBadges: listing.verificationBadges || [],
+        statusTimeline: listing.statusTimeline || [],
+        updatedAt: listing.updatedAt || new Date().toISOString()
+      }
+    }).catch(err => console.error('[PostgreSQL Sync] Listing sync error:', err?.message || err));
+  }
+
+  private deletePgListing(id: string) {
+    if (!pgDb) return;
+    pgDb.delete(schema.listingsTable).where(eq(schema.listingsTable.id, id)).catch(err => console.error('[PostgreSQL Sync] Delete listing error:', err?.message || err));
+  }
+
+  private syncPgUser(user: User) {
+    if (!pgDb) return;
+    pgDb.insert(schema.usersTable).values({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      email: user.email || null,
+      phone: user.phone || null,
+      phoneVerified: user.phoneVerified ?? true,
+      avatarUrl: user.avatarUrl || null,
+      orgId: user.orgId || null,
+      orgName: user.orgName || null,
+      activeStatus: user.activeStatus ?? true,
+      createdAt: user.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }).onConflictDoUpdate({
+      target: schema.usersTable.id,
+      set: {
+        name: user.name,
+        role: user.role,
+        email: user.email || null,
+        phone: user.phone || null,
+        avatarUrl: user.avatarUrl || null,
+        orgId: user.orgId || null,
+        orgName: user.orgName || null,
+        activeStatus: user.activeStatus ?? true,
+        updatedAt: new Date().toISOString()
+      }
+    }).catch(err => console.error('[PostgreSQL Sync] User sync error:', err?.message || err));
+  }
+
+  private syncPgRequest(req: PropertyRequest) {
+    if (!pgDb) return;
+    pgDb.insert(schema.propertyRequestsTable).values({
+      id: req.id,
+      requestNumber: req.requestNumber,
+      listingId: req.listingId,
+      listingTitle: req.listingTitle || null,
+      listingNumber: req.listingNumber || null,
+      listingPrice: req.listingPrice || null,
+      listingCurrency: req.listingCurrency || null,
+      listingImage: req.listingImage || null,
+      listingGovernorate: req.listingGovernorate || null,
+      seekerId: req.seekerId,
+      seekerName: req.seekerName || null,
+      seekerPhone: req.seekerPhone || null,
+      advertiserId: req.advertiserId,
+      advertiserName: req.advertiserName || null,
+      advertiserPhone: req.advertiserPhone || null,
+      requestType: req.requestType,
+      status: req.status,
+      notes: req.notes || null,
+      offeredPrice: req.offeredPrice || null,
+      preferredDate: req.preferredDate || null,
+      requestedDurationHours: req.requestedDurationHours || 48,
+      bookingId: req.bookingId || null,
+      paymentMethod: req.paymentMethod || null,
+      rentalUsageType: req.rentalUsageType || null,
+      leaseDurationMonths: req.leaseDurationMonths || null,
+      paymentFrequency: req.paymentFrequency || null,
+      createdAt: req.createdAt || new Date().toISOString(),
+      updatedAt: req.updatedAt || new Date().toISOString()
+    }).onConflictDoUpdate({
+      target: schema.propertyRequestsTable.id,
+      set: {
+        status: req.status,
+        bookingId: req.bookingId || null,
+        notes: req.notes || null,
+        updatedAt: req.updatedAt || new Date().toISOString()
+      }
+    }).catch(err => console.error('[PostgreSQL Sync] Request sync error:', err?.message || err));
+  }
+
+  private syncPgBooking(bkg: PropertyBooking) {
+    if (!pgDb) return;
+    pgDb.insert(schema.propertyBookingsTable).values({
+      id: bkg.id,
+      bookingNumber: bkg.bookingNumber,
+      requestId: bkg.requestId,
+      listingId: bkg.listingId,
+      listingTitle: bkg.listingTitle || null,
+      listingNumber: bkg.listingNumber || null,
+      listingImage: bkg.listingImage || null,
+      listingGovernorate: bkg.listingGovernorate || null,
+      listingPrice: bkg.listingPrice || null,
+      listingCurrency: bkg.listingCurrency || null,
+      seekerId: bkg.seekerId,
+      seekerName: bkg.seekerName || null,
+      seekerPhone: bkg.seekerPhone || null,
+      advertiserId: bkg.advertiserId,
+      advertiserName: bkg.advertiserName || null,
+      advertiserPhone: bkg.advertiserPhone || null,
+      status: bkg.status,
+      durationHours: bkg.durationHours || 48,
+      startDate: bkg.startDate || null,
+      expiresAt: bkg.expiresAt || null,
+      confirmedBy: bkg.confirmedBy || null,
+      dealStage: bkg.dealStage || null,
+      contractId: bkg.contractId || null,
+      contractNumber: bkg.contractNumber || null,
+      notes: bkg.notes || null,
+      paymentMethod: bkg.paymentMethod || null,
+      rentalUsageType: bkg.rentalUsageType || null,
+      inspectionVisit: bkg.inspectionVisit || null,
+      currentTerms: bkg.currentTerms || null,
+      agreedTerms: bkg.agreedTerms || null,
+      messages: bkg.messages || [],
+      createdAt: bkg.createdAt || new Date().toISOString(),
+      updatedAt: bkg.updatedAt || new Date().toISOString()
+    }).onConflictDoUpdate({
+      target: schema.propertyBookingsTable.id,
+      set: {
+        status: bkg.status,
+        dealStage: bkg.dealStage || null,
+        contractId: bkg.contractId || null,
+        contractNumber: bkg.contractNumber || null,
+        inspectionVisit: bkg.inspectionVisit || null,
+        currentTerms: bkg.currentTerms || null,
+        agreedTerms: bkg.agreedTerms || null,
+        messages: bkg.messages || [],
+        updatedAt: bkg.updatedAt || new Date().toISOString()
+      }
+    }).catch(err => console.error('[PostgreSQL Sync] Booking sync error:', err?.message || err));
+  }
+
+  private syncPgContract(cnt: PropertyContract) {
+    if (!pgDb) return;
+    pgDb.insert(schema.propertyContractsTable).values({
+      id: cnt.id,
+      contractNumber: cnt.contractNumber,
+      bookingId: cnt.bookingId,
+      bookingNumber: cnt.bookingNumber || null,
+      listingId: cnt.listingId,
+      listingNumber: cnt.listingNumber || null,
+      listingTitle: cnt.listingTitle || null,
+      contractType: cnt.contractType,
+      status: cnt.status,
+      currentVersion: cnt.currentVersion || 1,
+      firstParty: cnt.firstParty || null,
+      secondParty: cnt.secondParty || null,
+      propertySnapshot: cnt.propertySnapshot || null,
+      financialTerms: cnt.financialTerms || null,
+      clauses: cnt.clauses || [],
+      versionHistory: cnt.versionHistory || [],
+      createdAt: cnt.createdAt || new Date().toISOString(),
+      updatedAt: cnt.updatedAt || new Date().toISOString()
+    }).onConflictDoUpdate({
+      target: schema.propertyContractsTable.id,
+      set: {
+        status: cnt.status,
+        currentVersion: cnt.currentVersion || 1,
+        firstParty: cnt.firstParty || null,
+        secondParty: cnt.secondParty || null,
+        financialTerms: cnt.financialTerms || null,
+        clauses: cnt.clauses || [],
+        versionHistory: cnt.versionHistory || [],
+        updatedAt: cnt.updatedAt || new Date().toISOString()
+      }
+    }).catch(err => console.error('[PostgreSQL Sync] Contract sync error:', err?.message || err));
+  }
+
+  private syncPgAuditLog(entry: AuditLogEntry) {
+    if (!pgDb) return;
+    pgDb.insert(schema.auditLogsTable).values({
+      id: entry.id,
+      userId: entry.userId,
+      userName: entry.userName || null,
+      userRole: entry.userRole || null,
+      action: entry.action,
+      category: entry.targetType || null,
+      targetId: entry.targetId || null,
+      status: entry.result || null,
+      details: entry.details || null,
+      ipAddress: entry.ipAddress || null,
+      createdAt: entry.timestamp || new Date().toISOString()
+    }).catch(err => console.error('[PostgreSQL Sync] Audit log sync error:', err?.message || err));
+  }
+
   // --- Listings Operations ---
   public getListings(): Listing[] {
     this.checkBookingsExpiration();
@@ -1317,6 +1627,7 @@ class LocalDatabase {
     const normalized = normalizeListing(listing);
     this.data.listings.unshift(normalized);
     this.persist();
+    this.syncPgListing(normalized);
     return normalized;
   }
 
@@ -1338,6 +1649,7 @@ class LocalDatabase {
     };
     this.data.listings[index] = normalizeListing(merged);
     this.persist();
+    this.syncPgListing(this.data.listings[index]);
     return this.data.listings[index];
   }
 
@@ -1346,6 +1658,7 @@ class LocalDatabase {
     this.data.listings = this.data.listings.filter(l => l.id !== id);
     if (this.data.listings.length !== prevLength) {
       this.persist();
+      this.deletePgListing(id);
       return true;
     }
     return false;
@@ -1449,6 +1762,7 @@ class LocalDatabase {
       this.data.auditLogs = this.data.auditLogs.slice(0, 500);
     }
     this.persist();
+    this.syncPgAuditLog(entry);
     return entry;
   }
 
@@ -1495,6 +1809,7 @@ class LocalDatabase {
       ...updates
     };
     this.persist();
+    this.syncPgUser(this.data.users[index]);
     return this.data.users[index];
   }
 
@@ -1958,6 +2273,7 @@ class LocalDatabase {
   public addRequest(req: PropertyRequest): PropertyRequest {
     this.data.requests.unshift(req);
     this.persist();
+    this.syncPgRequest(req);
     return req;
   }
 
@@ -1970,6 +2286,7 @@ class LocalDatabase {
       updatedAt: new Date().toISOString().split('T')[0]
     };
     this.persist();
+    this.syncPgRequest(this.data.requests[index]);
     return this.data.requests[index];
   }
 
@@ -1978,6 +2295,7 @@ class LocalDatabase {
     this.data.requests = this.data.requests.filter(r => r.id !== id);
     if (this.data.requests.length !== prevLen) {
       this.persist();
+      if (pgDb) pgDb.delete(schema.propertyRequestsTable).where(eq(schema.propertyRequestsTable.id, id)).catch(err => console.error('[PostgreSQL Sync] Delete request error:', err?.message || err));
       return true;
     }
     return false;
@@ -2005,6 +2323,7 @@ class LocalDatabase {
     this.data.bookings.unshift(booking);
     this.syncListingsReservationStatus();
     this.persist();
+    this.syncPgBooking(booking);
     return booking;
   }
 
@@ -2018,6 +2337,7 @@ class LocalDatabase {
     };
     this.syncListingsReservationStatus();
     this.persist();
+    this.syncPgBooking(this.data.bookings[index]);
     return this.data.bookings[index];
   }
 
@@ -3048,6 +3368,7 @@ class LocalDatabase {
     });
 
     this.persist();
+    this.syncPgContract(newContract);
     return newContract;
   }
 
@@ -3151,6 +3472,7 @@ class LocalDatabase {
     }
 
     this.persist();
+    this.syncPgContract(contract);
     return { contract, wasApprovedModified: wasApproved };
   }
 
@@ -3233,6 +3555,7 @@ class LocalDatabase {
     }
 
     this.persist();
+    this.syncPgContract(contract);
     return contract;
   }
 
@@ -3356,6 +3679,7 @@ class LocalDatabase {
     }
 
     this.persist();
+    this.syncPgContract(contract);
     return contract;
   }
 
