@@ -1203,6 +1203,7 @@ class LocalDatabase {
               parsed.contracts = parsed.contracts.map(normalizeContract);
             }
 
+            this.data = parsed;
             this.persist(parsed, true);
             return parsed;
           }
@@ -1245,6 +1246,7 @@ class LocalDatabase {
       }
     };
 
+    this.data = initialData;
     this.persist(initialData, true);
     return initialData;
   }
@@ -1254,10 +1256,13 @@ class LocalDatabase {
 
   public flushToBackupSync() {
     try {
+      if (!this.data) return;
+      const serialized = JSON.stringify(this.data, null, 2);
+      if (!serialized) return;
       if (!fs.existsSync(PERSISTENT_BACKUP_DIR)) {
         fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
       }
-      fs.writeFileSync(PERSISTENT_BACKUP_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+      fs.writeFileSync(PERSISTENT_BACKUP_FILE, serialized, 'utf-8');
     } catch (err) {
       console.error('[Dalani DB] Error flushing backup to persistent file:', err);
     }
@@ -1265,15 +1270,30 @@ class LocalDatabase {
 
   public persist(dataToSave: DatabaseSchema = this.data, immediate: boolean = false) {
     try {
-      dataToSave.meta.lastUpdated = new Date().toISOString();
+      if (!dataToSave) {
+        if (this.data) {
+          dataToSave = this.data;
+        } else {
+          return;
+        }
+      }
+      if (this.data !== dataToSave) {
+        this.data = dataToSave;
+      }
+      if (dataToSave && dataToSave.meta) {
+        dataToSave.meta.lastUpdated = new Date().toISOString();
+      }
 
       const doWrite = () => {
         try {
+          if (!this.data) return;
+          const serialized = JSON.stringify(this.data, null, 2);
+          if (!serialized) return;
           if (!fs.existsSync(DB_STORE_DIR)) {
             fs.mkdirSync(DB_STORE_DIR, { recursive: true });
           }
           // Write to live cache inside node_modules (immune to all watchers)
-          fs.writeFileSync(DB_FILE_PATH, JSON.stringify(this.data, null, 2), 'utf-8');
+          fs.writeFileSync(DB_FILE_PATH, serialized, 'utf-8');
         } catch (err) {
           console.error('[Dalani DB] Error persisting database to disk:', err);
         }

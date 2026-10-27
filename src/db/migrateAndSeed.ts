@@ -33,9 +33,9 @@ export async function runAutoMigrationAndSeeding(): Promise<{
   console.log('[Dalani Migration] PostgreSQL connected. Verifying tables and executing auto-migration...');
 
   try {
-    // 1. Ensure Table Structure Exists in PostgreSQL
-    await client`
-      CREATE TABLE IF NOT EXISTS users (
+    // 1. Ensure Table Structure Exists in PostgreSQL by executing each table DDL individually via client.unsafe
+    const tableDefinitions = [
+      `CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(128) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         role VARCHAR(64) NOT NULL,
@@ -48,9 +48,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         active_status BOOLEAN DEFAULT true,
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS organizations (
+      )`,
+      `CREATE TABLE IF NOT EXISTS organizations (
         id VARCHAR(128) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         license_number VARCHAR(128),
@@ -59,9 +58,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         governorate VARCHAR(128),
         verification_status VARCHAR(64) DEFAULT 'verified',
         created_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS listings (
+      )`,
+      `CREATE TABLE IF NOT EXISTS listings (
         id VARCHAR(128) PRIMARY KEY,
         listing_number VARCHAR(128) NOT NULL,
         title TEXT NOT NULL,
@@ -84,9 +82,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         status_timeline JSONB,
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS property_requests (
+      )`,
+      `CREATE TABLE IF NOT EXISTS property_requests (
         id VARCHAR(128) PRIMARY KEY,
         request_number VARCHAR(128) NOT NULL,
         listing_id VARCHAR(128) NOT NULL,
@@ -115,9 +112,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         payment_frequency VARCHAR(64),
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS property_bookings (
+      )`,
+      `CREATE TABLE IF NOT EXISTS property_bookings (
         id VARCHAR(128) PRIMARY KEY,
         booking_number VARCHAR(128) NOT NULL,
         request_id VARCHAR(128) NOT NULL,
@@ -151,9 +147,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         messages JSONB,
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS property_contracts (
+      )`,
+      `CREATE TABLE IF NOT EXISTS property_contracts (
         id VARCHAR(128) PRIMARY KEY,
         contract_number VARCHAR(128) NOT NULL,
         booking_id VARCHAR(128) NOT NULL,
@@ -172,9 +167,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         version_history JSONB,
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS verification_requests (
+      )`,
+      `CREATE TABLE IF NOT EXISTS verification_requests (
         id VARCHAR(128) PRIMARY KEY,
         listing_id VARCHAR(128) NOT NULL,
         listing_title TEXT,
@@ -188,9 +182,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         reviewed_at VARCHAR(64),
         notes TEXT,
         created_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS reports (
+      )`,
+      `CREATE TABLE IF NOT EXISTS reports (
         id VARCHAR(128) PRIMARY KEY,
         report_number VARCHAR(128) NOT NULL,
         reporter_id VARCHAR(128) NOT NULL,
@@ -202,9 +195,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         investigated_by VARCHAR(128),
         resolution_notes TEXT,
         created_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS support_tickets (
+      )`,
+      `CREATE TABLE IF NOT EXISTS support_tickets (
         id VARCHAR(128) PRIMARY KEY,
         ticket_number VARCHAR(128) NOT NULL,
         user_id VARCHAR(128) NOT NULL,
@@ -215,9 +207,8 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         messages JSONB,
         created_at VARCHAR(64),
         updated_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS audit_logs (
+      )`,
+      `CREATE TABLE IF NOT EXISTS audit_logs (
         id VARCHAR(128) PRIMARY KEY,
         user_id VARCHAR(128) NOT NULL,
         user_name VARCHAR(255),
@@ -229,14 +220,17 @@ export async function runAutoMigrationAndSeeding(): Promise<{
         details TEXT,
         ip_address VARCHAR(128),
         created_at VARCHAR(64)
-      );
-
-      CREATE TABLE IF NOT EXISTS system_settings (
+      )`,
+      `CREATE TABLE IF NOT EXISTS system_settings (
         id VARCHAR(64) PRIMARY KEY DEFAULT 'global',
         settings JSONB NOT NULL,
         updated_at VARCHAR(64)
-      );
-    `;
+      )`
+    ];
+
+    for (const ddl of tableDefinitions) {
+      await client.unsafe(ddl);
+    }
 
     // 2. Check if data seeding is required
     const userCountRes = await db.select({ val: count() }).from(schema.usersTable);

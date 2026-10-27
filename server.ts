@@ -3690,7 +3690,7 @@ async function startServer() {
   try {
     const migration = await runAutoMigrationAndSeeding();
     console.log('[Dalani Startup] Auto-migration result:', migration.message);
-    if (migration.usingPostgres) {
+    if (migration.usingPostgres && migration.success) {
       await db.loadFromPostgres();
     }
   } catch (err) {
