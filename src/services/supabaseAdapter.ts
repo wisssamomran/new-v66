@@ -1,0 +1,387 @@
+/**
+ * منصة «دلنّي» العقارية اليمنية - Dalani Real Estate Platform
+ * مهايئ الاتصال والعمليات السحابية (Supabase Service Adapter)
+ * 
+ * ينفذ عمليات القراءة والكتابة المباشرة مع قاعدة بيانات Supabase الحقيقية
+ * عند توفر مفاتيح الاتصال، مع العزل الآمن والمعالجة الرصينة للأخطاء
+ */
+
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import {
+  Listing,
+  PropertyRequest,
+  PropertyBooking,
+  PropertyContract,
+  AuditLogEntry,
+  User
+} from '../types';
+import {
+  mapListingToSupabase,
+  mapListingFromSupabase,
+  mapRequestToSupabase,
+  mapRequestFromSupabase,
+  mapBookingToSupabase,
+  mapBookingFromSupabase,
+  mapContractToSupabase,
+  mapContractFromSupabase,
+  mapAuditLogToSupabase,
+  mapAuditLogFromSupabase,
+  mapUserToSupabase
+} from './supabaseMappers';
+
+export class SupabaseAdapter {
+  /**
+   * هل إعدادات Supabase متوفرة وقابلة للاستخدام؟
+   */
+  static isConfigured(): boolean {
+    return isSupabaseConfigured();
+  }
+
+  /**
+   * التأكد من وجود سجل المستخدم في جدول users لمنع خطأ Foreign Key Constraint
+   */
+  static async ensureUserExists(user: User): Promise<boolean> {
+    const client = getSupabaseClient();
+    if (!client) return false;
+
+    try {
+      const payload = mapUserToSupabase(user);
+      const { error } = await client
+        .from('users')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) {
+        console.warn('[SupabaseAdapter] ensureUserExists warning:', error.message);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[SupabaseAdapter] ensureUserExists exception:', e);
+      return false;
+    }
+  }
+
+  // ==========================================
+  // 1. العقارات والإعلانات (Listings)
+  // ==========================================
+
+  static async fetchListings(): Promise<{ success: boolean; data?: Listing[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('listings')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      const listings = (data || []).map(mapListingFromSupabase);
+      return { success: true, data: listings };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطأ غير متوقع أثناء جلب العقارات' };
+    }
+  }
+
+  static async fetchListingById(id: string): Promise<{ success: boolean; data?: Listing; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('listings')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) return { success: false, error: error.message };
+      if (!data) return { success: false, error: 'العقار غير موجود' };
+      return { success: true, data: mapListingFromSupabase(data) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveListing(listing: Listing): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapListingToSupabase(listing);
+      const { error } = await client
+        .from('listings')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateListing(id: string, updates: Partial<Listing>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      // جلب السجل الحالي للدمج
+      const current = await this.fetchListingById(id);
+      if (!current.success || !current.data) {
+        return { success: false, error: current.error || 'العقار غير موجود' };
+      }
+
+      const merged: Listing = {
+        ...current.data,
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+
+      const payload = mapListingToSupabase(merged);
+      const { error } = await client
+        .from('listings')
+        .update(payload)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async deleteListing(id: string): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('listings')
+        .delete()
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 2. طلبات الباحثين (Property Requests)
+  // ==========================================
+
+  static async fetchRequests(): Promise<{ success: boolean; data?: PropertyRequest[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('property_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapRequestFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveRequest(req: PropertyRequest): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapRequestToSupabase(req);
+      const { error } = await client
+        .from('property_requests')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateRequest(id: string, updates: Partial<PropertyRequest>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: current, error: getErr } = await client
+        .from('property_requests')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (getErr || !current) return { success: false, error: getErr?.message || 'الطلب غير موجود' };
+
+      const merged = { ...mapRequestFromSupabase(current), ...updates };
+      const payload = mapRequestToSupabase(merged);
+
+      const { error } = await client
+        .from('property_requests')
+        .update(payload)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 3. الحجوزات المؤقتة (Property Bookings)
+  // ==========================================
+
+  static async fetchBookings(): Promise<{ success: boolean; data?: PropertyBooking[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('property_bookings')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapBookingFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveBooking(booking: PropertyBooking): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapBookingToSupabase(booking);
+      const { error } = await client
+        .from('property_bookings')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateBooking(id: string, updates: Partial<PropertyBooking>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: current, error: getErr } = await client
+        .from('property_bookings')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (getErr || !current) return { success: false, error: getErr?.message || 'الحجز غير موجود' };
+
+      const merged = { ...mapBookingFromSupabase(current), ...updates };
+      const payload = mapBookingToSupabase(merged);
+
+      const { error } = await client
+        .from('property_bookings')
+        .update(payload)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 4. العقود والتوثيق (Property Contracts)
+  // ==========================================
+
+  static async fetchContracts(): Promise<{ success: boolean; data?: PropertyContract[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('property_contracts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapContractFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveContract(contract: PropertyContract): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapContractToSupabase(contract);
+      const { error } = await client
+        .from('property_contracts')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateContract(id: string, updates: Partial<PropertyContract>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: current, error: getErr } = await client
+        .from('property_contracts')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (getErr || !current) return { success: false, error: getErr?.message || 'العقد غير موجود' };
+
+      const merged = { ...mapContractFromSupabase(current), ...updates };
+      const payload = mapContractToSupabase(merged);
+
+      const { error } = await client
+        .from('property_contracts')
+        .update(payload)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 5. سجل التدقيق الرقابي (Audit Logs)
+  // ==========================================
+
+  static async logAudit(entry: AuditLogEntry): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapAuditLogToSupabase(entry);
+      const { error } = await client
+        .from('audit_logs')
+        .insert(payload);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+}

@@ -23,6 +23,7 @@ import { MyAccountPage } from './pages/MyAccountPage';
 import { BookingsManagementPage } from './pages/BookingsManagementPage';
 import { DalaniAiAssistantModal } from './components/DalaniAiAssistantModal';
 import { AppPermissionsModal } from './components/AppPermissionsModal';
+import { SupabaseConnectionModal } from './components/SupabaseConnectionModal';
 import { Listing } from './types';
 import { CheckCircle2, AlertCircle, Info, XCircle } from 'lucide-react';
 
@@ -114,6 +115,16 @@ const AppContent: React.FC = () => {
       return sessionStorage.getItem('dalani_ai_modal_open') === 'true';
     } catch { return false; }
   });
+
+  // Supabase Connection Diagnostic Modal
+  const [supabaseModalOpen, setSupabaseModalOpen] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    (window as any).openSupabaseTester = () => setSupabaseModalOpen(true);
+    return () => {
+      delete (window as any).openSupabaseTester;
+    };
+  }, []);
 
   const handleOpenAuth = (mode: 'login' | 'register' = 'login', reason?: string) => {
     setAuthModalMode(mode);
@@ -387,7 +398,12 @@ const AppContent: React.FC = () => {
       </main>
 
       {/* Footer (only on non-home pages to keep map clean and full-screen like screenshot) */}
-      {currentView !== 'home' && <Footer onNavigate={handleNavigate} />}
+      {currentView !== 'home' && (
+        <Footer
+          onNavigate={handleNavigate}
+          onOpenSupabaseModal={() => setSupabaseModalOpen(true)}
+        />
+      )}
 
       {/* Fixed Bottom Navigation Bar (With Integrated Dalani AI) */}
       <BottomNavBar
@@ -430,6 +446,12 @@ const AppContent: React.FC = () => {
       <AppPermissionsModal
         isOpen={permissionsModalOpen}
         onClose={() => setPermissionsModalOpen(false)}
+      />
+
+      {/* Supabase Real Connection Diagnostic Modal */}
+      <SupabaseConnectionModal
+        isOpen={supabaseModalOpen}
+        onClose={() => setSupabaseModalOpen(false)}
       />
 
       {/* Global Toast Notifications Container (Positioned top-left to avoid blocking AI button) */}

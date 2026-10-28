@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { handleLocalApiCall } from '../services/localApi';
+import { SupabaseAdapter } from '../services/supabaseAdapter';
 import {
   Listing,
   User,
@@ -916,6 +917,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     try {
+      // 1. If Supabase is connected, attempt direct cloud sync
+      if (SupabaseAdapter.isConfigured()) {
+        const [cloudReq, cloudBkg, cloudCnt] = await Promise.all([
+          SupabaseAdapter.fetchRequests(),
+          SupabaseAdapter.fetchBookings(),
+          SupabaseAdapter.fetchContracts()
+        ]);
+        if (cloudReq.success && cloudReq.data && cloudReq.data.length > 0) {
+          setRequests(cloudReq.data);
+          try { localStorage.setItem('dalani_requests', JSON.stringify(cloudReq.data)); } catch {}
+        }
+        if (cloudBkg.success && cloudBkg.data && cloudBkg.data.length > 0) {
+          setBookings(cloudBkg.data);
+          try { localStorage.setItem('dalani_bookings', JSON.stringify(cloudBkg.data)); } catch {}
+        }
+        if (cloudCnt.success && cloudCnt.data && cloudCnt.data.length > 0) {
+          setContracts(cloudCnt.data);
+          try { localStorage.setItem('dalani_contracts', JSON.stringify(cloudCnt.data)); } catch {}
+        }
+      }
+
+      // 2. Fetch standard local in-app or proxy endpoints
       const [reqRes, bkgRes, cntRes] = await Promise.all([
         apiFetch('/api/requests'),
         apiFetch('/api/bookings'),
@@ -944,9 +967,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [apiFetch, currentUser.role]);
 
-  // Sync data from Server API
+  // Sync data from Server API & Supabase Cloud
   const refreshData = useCallback(async () => {
     try {
+      // 1. Cloud Supabase Sync if configured
+      if (SupabaseAdapter.isConfigured()) {
+        const cloudListings = await SupabaseAdapter.fetchListings();
+        if (cloudListings.success && cloudListings.data && cloudListings.data.length > 0) {
+          const normalized = cloudListings.data.map(normalizeListing);
+          setListings(normalized);
+          try { localStorage.setItem('dalani_listings', JSON.stringify(normalized)); } catch {}
+        }
+      }
+
+      // 2. Local / Standard API sync
       const res = await apiFetch('/api/listings');
       if (res && res.ok) {
         const data = await res.json();

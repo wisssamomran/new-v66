@@ -1,6 +1,7 @@
 import { embeddedStore } from './localDatabase';
-import { User, UserRole, Listing, PropertyRequest, PropertyBooking, PropertyContract } from '../types';
+import { User, UserRole, Listing, PropertyRequest, PropertyBooking, PropertyContract, AuditLogEntry } from '../types';
 import { generateClientAiResponse } from '../utils/clientAiEngine';
+import { SupabaseAdapter } from './supabaseAdapter';
 
 export async function handleLocalApiCall(
   url: string,
@@ -28,7 +29,7 @@ export async function handleLocalApiCall(
 
   // Log Audit Entry
   const logAudit = (action: string, targetType: any, targetId: string, result: 'success' | 'warning' | 'denied', details: string) => {
-    embeddedStore.addAuditLog({
+    const auditEntry: AuditLogEntry = {
       id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       timestamp: new Date().toISOString(),
       userId: currentUser.id,
@@ -40,8 +41,17 @@ export async function handleLocalApiCall(
       result,
       details,
       ipAddress: '127.0.0.1 (Offline App)'
-    });
+    };
+    embeddedStore.addAuditLog(auditEntry);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.logAudit(auditEntry).catch(e => console.warn('[Supabase Sync Audit]:', e));
+    }
   };
+
+  // Ensure current user is synced to Supabase when active
+  if (SupabaseAdapter.isConfigured() && currentUser.role !== 'visitor') {
+    SupabaseAdapter.ensureUserExists(currentUser).catch(() => {});
+  }
 
   // 1. Auth Endpoints
   if (path === '/api/auth/me') {
@@ -102,6 +112,9 @@ export async function handleLocalApiCall(
       updatedAt: new Date().toISOString().split('T')[0]
     });
     logAudit('إنشاء إعلان عقاري محلي', 'listing', newListing.id, 'success', `تم إنشاء الإعلان برقم ${newListing.listingNumber}`);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.saveListing(newListing).catch(e => console.warn('[Supabase Sync Listing]:', e));
+    }
     return makeResponse(201, { message: 'تم إنشاء الإعلان بنجاح', listing: newListing });
   }
 
@@ -115,12 +128,18 @@ export async function handleLocalApiCall(
   if (path.startsWith('/api/listings/') && method === 'PUT') {
     const id = path.replace('/api/listings/', '');
     const updated = embeddedStore.updateListing(id, bodyData);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateListing(id, bodyData).catch(e => console.warn('[Supabase Sync Update Listing]:', e));
+    }
     return makeResponse(200, { message: 'تم تحديث الإعلان بنجاح', listing: updated });
   }
 
   if (path.startsWith('/api/listings/') && method === 'DELETE') {
     const id = path.replace('/api/listings/', '');
     embeddedStore.deleteListing(id);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.deleteListing(id).catch(e => console.warn('[Supabase Sync Delete Listing]:', e));
+    }
     return makeResponse(200, { message: 'تم حذف الإعلان بنجاح' });
   }
 
@@ -164,6 +183,9 @@ export async function handleLocalApiCall(
 
     embeddedStore.addRequest(newRequest);
     logAudit('إرسال طلب حجز عقار', 'request', newRequest.id, 'success', `طلب حجز على الإعلان ${listing.listingNumber}`);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.saveRequest(newRequest).catch(e => console.warn('[Supabase Sync Request]:', e));
+    }
     return makeResponse(201, { message: 'تم تقديم طلب الحجز بنجاح', request: newRequest });
   }
 
@@ -209,6 +231,10 @@ export async function handleLocalApiCall(
     embeddedStore.addBooking(newBooking);
     embeddedStore.updateRequest(reqItem.id, { status: 'accepted', bookingId: newBooking.id });
     logAudit('تأكيد الحجز المؤقت', 'booking', newBooking.id, 'success', `حجز مؤقت برقم ${newBooking.bookingNumber}`);
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.saveBooking(newBooking).catch(e => console.warn('[Supabase Sync Booking]:', e));
+      SupabaseAdapter.updateRequest(reqItem.id, { status: 'accepted', bookingId: newBooking.id }).catch(e => console.warn('[Supabase Sync Request Update]:', e));
+    }
     return makeResponse(201, { message: 'تم تأكيد الحجز المؤقت بنجاح', booking: newBooking });
   }
 
@@ -277,6 +303,9 @@ export async function handleLocalApiCall(
         createdAt: dateStr,
         updatedAt: dateStr
       });
+      if (SupabaseAdapter.isConfigured()) {
+        SupabaseAdapter.saveContract(contract).catch(e => console.warn('[Supabase Sync Contract]:', e));
+      }
     }
 
     return makeResponse(201, { message: 'تم إنشاء مسودة العقد بنجاح', contract });

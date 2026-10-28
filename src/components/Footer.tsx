@@ -1,12 +1,13 @@
 import React from 'react';
 import { DalaniLogo } from './DalaniLogo';
-import { ShieldCheck, Phone, Mail, MapPin, CheckCircle, Info } from 'lucide-react';
+import { ShieldCheck, Phone, Mail, MapPin, CheckCircle, Info, Database } from 'lucide-react';
 
 interface FooterProps {
   onNavigate: (view: string) => void;
+  onOpenSupabaseModal?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenSupabaseModal }) => {
   return (
     <footer className="bg-[#16324F] text-white pt-14 pb-8 border-t border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -90,7 +91,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         {/* Bottom Bar */}
         <div className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-400">
           <div>جميع الحقوق محفوظة © {new Date().getFullYear()} لمنصة «دلنّي» العقارية اليمنية.</div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 md:gap-4">
             <button onClick={() => onNavigate('help')} className="hover:text-white transition-colors">
               شروط الاستخدام
             </button>
@@ -102,6 +103,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             <button onClick={() => onNavigate('help')} className="hover:text-white transition-colors">
               سياسة البلاغات
             </button>
+            {onOpenSupabaseModal && (
+              <>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={onOpenSupabaseModal}
+                  className="hover:text-emerald-300 transition-colors flex items-center gap-1.5 font-mono text-[11px] text-emerald-400 bg-emerald-950/60 hover:bg-emerald-900/80 px-2.5 py-1 rounded-lg border border-emerald-500/30 shadow-xs"
+                  title="فحص وتشخيص الاتصال الفعلي بقاعدة بيانات Supabase"
+                >
+                  <Database className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>فحص اتصال Supabase</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
