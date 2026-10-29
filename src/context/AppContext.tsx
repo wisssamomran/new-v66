@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { handleLocalApiCall } from '../services/localApi';
 import { SupabaseAdapter } from '../services/supabaseAdapter';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import {
+  mapListingFromSupabase,
+  mapBookingFromSupabase,
+  mapRequestFromSupabase,
+  mapContractFromSupabase
+} from '../services/supabaseMappers';
 import {
   Listing,
   User,
@@ -1006,6 +1013,120 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshData();
   }, [refreshData]);
+
+  // ==========================================
+  // Realtime Supabase Subscription (الاتصال الفوري المباشر بقاعدة البيانات)
+  // لا حاجة لأزرار تحديث يدوي - تتزامن الواجهة تلقائياً في أجزاء من الثانية
+  // ==========================================
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const channel = client
+        .channel('dalani_instant_realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'listings' },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const newListing = normalizeListing(mapListingFromSupabase(payload.new));
+              setListings(prev => {
+                if (prev.some(l => l.id === newListing.id)) {
+                  return prev.map(l => (l.id === newListing.id ? newListing : l));
+                }
+                return [newListing, ...prev];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = normalizeListing(mapListingFromSupabase(payload.new));
+              setListings(prev => prev.map(l => (l.id === updated.id ? updated : l)));
+            } else if (payload.eventType === 'DELETE') {
+              const deletedId = (payload.old as any)?.id;
+              if (deletedId) {
+                setListings(prev => prev.filter(l => l.id !== deletedId));
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'property_bookings' },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const newBkg = mapBookingFromSupabase(payload.new);
+              setBookings(prev => {
+                if (prev.some(b => b.id === newBkg.id)) {
+                  return prev.map(b => (b.id === newBkg.id ? newBkg : b));
+                }
+                return [newBkg, ...prev];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = mapBookingFromSupabase(payload.new);
+              setBookings(prev => prev.map(b => (b.id === updated.id ? updated : b)));
+            } else if (payload.eventType === 'DELETE') {
+              const deletedId = (payload.old as any)?.id;
+              if (deletedId) {
+                setBookings(prev => prev.filter(b => b.id !== deletedId));
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'property_requests' },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const newReq = mapRequestFromSupabase(payload.new);
+              setRequests(prev => {
+                if (prev.some(r => r.id === newReq.id)) {
+                  return prev.map(r => (r.id === newReq.id ? newReq : r));
+                }
+                return [newReq, ...prev];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = mapRequestFromSupabase(payload.new);
+              setRequests(prev => prev.map(r => (r.id === updated.id ? updated : r)));
+            } else if (payload.eventType === 'DELETE') {
+              const deletedId = (payload.old as any)?.id;
+              if (deletedId) {
+                setRequests(prev => prev.filter(r => r.id !== deletedId));
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'property_contracts' },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const newCnt = mapContractFromSupabase(payload.new);
+              setContracts(prev => {
+                if (prev.some(c => c.id === newCnt.id)) {
+                  return prev.map(c => (c.id === newCnt.id ? newCnt : c));
+                }
+                return [newCnt, ...prev];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = mapContractFromSupabase(payload.new);
+              setContracts(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+            } else if (payload.eventType === 'DELETE') {
+              const deletedId = (payload.old as any)?.id;
+              if (deletedId) {
+                setContracts(prev => prev.filter(c => c.id !== deletedId));
+              }
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        client.removeChannel(channel);
+      };
+    } catch (e) {
+      console.warn('[Dalani Realtime] Error setting up realtime subscriptions:', e);
+    }
+  }, []);
 
   // Local storage backup sync
   useEffect(() => {
@@ -2239,6 +2360,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const filtered = prev.filter(c => c.id !== json.contract.id);
             return [json.contract, ...filtered];
           });
+          if (SupabaseAdapter.isConfigured()) {
+            SupabaseAdapter.saveContract(json.contract).catch(e => console.warn('[Supabase Sync]:', e));
+          }
         }
         await fetchRequestsAndBookings();
         return { success: true, message: json.message, contract: json.contract };
@@ -2272,6 +2396,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast(json.message || 'تم تحديث العقد بنجاح', json.wasApprovedModified ? 'warning' : 'success');
         if (json.contract) {
           setContracts(prev => prev.map(c => (c.id === json.contract.id ? json.contract : c)));
+          if (SupabaseAdapter.isConfigured()) {
+            SupabaseAdapter.updateContract(contractId, json.contract).catch(e => console.warn('[Supabase Sync]:', e));
+          }
         }
         await fetchRequestsAndBookings();
         return { success: true, message: json.message, contract: json.contract, wasApprovedModified: json.wasApprovedModified };
@@ -2295,6 +2422,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast(json.message || 'تم تسجيل الاعتماد بنجاح', 'success');
         if (json.contract) {
           setContracts(prev => prev.map(c => (c.id === json.contract.id ? json.contract : c)));
+          if (SupabaseAdapter.isConfigured()) {
+            SupabaseAdapter.updateContract(contractId, json.contract).catch(e => console.warn('[Supabase Sync]:', e));
+          }
         }
         await fetchRequestsAndBookings();
         return { success: true, message: json.message, contract: json.contract };
@@ -2332,6 +2462,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast(json.message || 'تم تسجيل التوقيع وتوثيقه بنجاح', 'success');
         if (json.contract) {
           setContracts(prev => prev.map(c => (c.id === json.contract.id ? json.contract : c)));
+          if (SupabaseAdapter.isConfigured()) {
+            SupabaseAdapter.updateContract(contractId, json.contract).catch(e => console.warn('[Supabase Sync]:', e));
+          }
         }
         await fetchRequestsAndBookings();
         return { success: true, message: json.message, contract: json.contract };

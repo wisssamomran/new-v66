@@ -36,8 +36,10 @@ import {
   ExternalLink,
   Lock,
   Download,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
+import { printContractDocument } from '../services/printerService';
 
 interface ContractDocumentModalProps {
   contractId?: string;
@@ -104,6 +106,7 @@ export const ContractDocumentModal: React.FC<ContractDocumentModalProps> = ({
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   // Load contract data
   useEffect(() => {
@@ -268,9 +271,29 @@ export const ContractDocumentModal: React.FC<ContractDocumentModalProps> = ({
     showToast('تم تصدير ملف العقد بنجاح', 'success');
   };
 
-  // Handle Print Action
-  const handlePrint = () => {
-    window.print();
+  // Handle Print Action with native Android System PrintManager & clean web fallback
+  const handlePrint = async () => {
+    if (!contract) return;
+    setIsPrinting(true);
+    showToast('جارٍ تجهيز وثيقة العقد واستدعاء طابعة النظام...', 'info');
+    try {
+      const res = await printContractDocument(contract);
+      if (res.success) {
+        if (res.method === 'android_native') {
+          showToast('تم استدعاء حوار طابعة نظام أندرويد بنجاح', 'success');
+        } else {
+          showToast('تم فتح نافذة المعاينة والطباعة الرسمية', 'success');
+        }
+      } else {
+        showToast('تعذر استدعاء طابعة النظام، تم التحويل للطباعة المباشرة', 'warning');
+        window.print();
+      }
+    } catch (err) {
+      console.error('Print failed:', err);
+      window.print();
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   // Add Clause in Edit Mode
@@ -548,12 +571,21 @@ export const ContractDocumentModal: React.FC<ContractDocumentModalProps> = ({
 
             <button type="button" 
               onClick={handlePrint}
-              
-              className="px-3.5 py-2 rounded-xl bg-[#12A889] hover:bg-[#0fa37f] text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              title="طباعة وتصدير العقد الرسمي"
+              disabled={isPrinting || !contract}
+              className="px-3.5 py-2 rounded-xl bg-[#12A889] hover:bg-[#0fa37f] text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-60 disabled:cursor-not-allowed"
+              title="طباعة العقد واستدعاء طابعة النظام / حفظ PDF"
             >
-              <Printer className="w-4 h-4" />
-              <span>طباعة / تصدير PDF</span>
+              {isPrinting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>جارٍ الاستدعاء...</span>
+                </>
+              ) : (
+                <>
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة / حفظ PDF</span>
+                </>
+              )}
             </button>
 
             <button type="button" 

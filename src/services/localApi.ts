@@ -244,14 +244,33 @@ export async function handleLocalApiCall(
     return makeResponse(201, { message: 'تم تأكيد الحجز المؤقت بنجاح', booking: newBooking });
   }
 
-  // 5. Contracts Endpoints
+  // 5. Contracts Endpoints (منظومة العقود والتوثيق القانوني المعتمد)
   if (path === '/api/contracts' && method === 'GET') {
     const contracts = embeddedStore.getContracts();
-    return makeResponse(200, { contracts });
+    return makeResponse(200, { contracts, count: contracts.length });
   }
 
-  if (path === '/api/contracts/from-booking' && method === 'POST') {
-    const { bookingId } = bodyData;
+  // Get contract by ID
+  if (path.startsWith('/api/contracts/') && !path.includes('/approve') && !path.includes('/sign') && !path.includes('/amend') && !path.includes('/respond-amendment') && !path.includes('/cancel') && method === 'GET') {
+    const cid = path.replace('/api/contracts/', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+    return makeResponse(200, { contract });
+  }
+
+  // Get contract by booking ID
+  if (path.startsWith('/api/bookings/') && path.endsWith('/contract') && method === 'GET') {
+    const bid = path.replace('/api/bookings/', '').replace('/contract', '');
+    const contract = embeddedStore.getContractByBookingId(bid);
+    return makeResponse(200, { contract: contract || null, hasContract: Boolean(contract) });
+  }
+
+  // Generate contract from booking
+  if ((path.startsWith('/api/bookings/') && path.endsWith('/contract/generate')) || path === '/api/contracts/from-booking') {
+    const bookingId = path.startsWith('/api/bookings/')
+      ? path.replace('/api/bookings/', '').replace('/contract/generate', '')
+      : bodyData.bookingId;
+
     const booking = embeddedStore.getBookingById(bookingId);
     if (!booking) return makeResponse(404, { error: 'الحجز غير موجود' });
 
@@ -259,6 +278,12 @@ export async function handleLocalApiCall(
     if (!contract) {
       const nowStr = new Date().toISOString();
       const dateStr = nowStr.split('T')[0];
+      const listing = embeddedStore.getListingById(booking.listingId);
+      const contractType = (bodyData.customType || (listing?.purpose === 'sale' ? 'sale' : 'lease')) as 'sale' | 'lease';
+      const price = booking.listingPrice || 0;
+      const currency = booking.listingCurrency || 'YER';
+      const deposit = Math.round(price * 0.05);
+
       contract = embeddedStore.addContract({
         id: `cnt-${Date.now()}`,
         contractNumber: `CNT-2026-${Math.floor(2000 + Math.random() * 8000)}`,
@@ -268,53 +293,318 @@ export async function handleLocalApiCall(
         listingId: booking.listingId,
         listingNumber: booking.listingNumber,
         listingTitle: booking.listingTitle,
-        contractType: 'sale',
+        contractType,
         status: 'draft',
         propertySnapshot: {
-          title: booking.listingTitle,
-          propertyType: 'apartment',
-          purpose: 'sale',
-          governorate: 'صنعاء',
-          city: 'صنعاء',
-          district: 'حدة',
-          area: 200,
-          areaUnit: 'م²'
+          title: listing?.title || booking.listingTitle,
+          propertyType: listing?.propertyType || 'apartment',
+          purpose: listing?.purpose || (contractType === 'sale' ? 'sale' : 'rent'),
+          governorate: listing?.location?.governorate || 'صنعاء',
+          city: listing?.location?.city || 'صنعاء',
+          district: listing?.location?.district || 'حدة',
+          street: listing?.location?.street || 'الشارع الرئيسي',
+          area: listing?.area || 180,
+          areaUnit: listing?.areaUnit || 'م²',
+          deedNumber: listing?.deedNumber || 'بصيرة شرعية مقيدة بالسجل العقاري المعتمد'
         },
         firstParty: {
           id: booking.advertiserId,
           name: booking.advertiserName,
           phone: booking.advertiserPhone,
-          role: 'seller',
+          role: contractType === 'sale' ? 'seller' : 'lessor',
+          nationalIdOrPassport: 'بطاقة شخصية صادرة من الجمهورية اليمنية',
           signatureStatus: 'unsigned'
         },
         secondParty: {
           id: booking.seekerId,
           name: booking.seekerName,
           phone: booking.seekerPhone,
-          role: 'buyer',
+          role: contractType === 'sale' ? 'buyer' : 'lessee',
+          nationalIdOrPassport: 'بطاقة شخصية صادرة من الجمهورية اليمنية',
           signatureStatus: 'unsigned'
         },
+        witnesses: [
+          {
+            id: 'wit-1',
+            name: 'فضيلة الشيخ / القاضي الأمين الشرعي المعتمد',
+            phone: '+967 771 000 111',
+            role: 'witness',
+            nationalIdOrPassport: 'ترخيص توثيق شرعي صادر عن وزارة العدل',
+            signatureStatus: 'unsigned'
+          },
+          {
+            id: 'wit-2',
+            name: 'شاهد إثبات ثانٍ',
+            phone: '+967 772 000 222',
+            role: 'witness',
+            nationalIdOrPassport: 'بطاقة شخصية سارية',
+            signatureStatus: 'unsigned'
+          }
+        ],
         financialTerms: {
-          totalAmount: booking.listingPrice,
-          currency: booking.listingCurrency,
-          depositAmount: Math.round(booking.listingPrice * 0.05),
-          paymentSchedule: 'دفعة نقداً والباقي بشيك مصدق عند الإفراغ والتسليم'
+          totalAmount: price,
+          currency,
+          depositAmount: deposit,
+          depositCurrency: currency,
+          paymentSchedule: contractType === 'lease'
+            ? 'سداد مبلغ التأمين والضمانة، وتسليم الأجرة مقدماً بموجب سند قبض رسمي'
+            : 'سداد العربون، وتسليم المتبقي بشيك مصرفي مصدق عند الإفراغ والتسليم'
         },
         clauses: [
           { id: 'cls-1', number: 1, title: 'التمهيد وأهلية التعاقد', content: 'يقر الطرفان بأهليتهما الشرعية والقانونية المعتبرة شرعاً للتعاقد والتصرف النافي للجهالة.', isMandatory: true },
-          { id: 'cls-2', number: 2, title: 'محل العقد والمعاينة', content: 'عاين المشتري العقار المبيع المعاينة الشرعية النافية للجهالة وقبله بحالته الراهنة.', isMandatory: true }
+          { id: 'cls-2', number: 2, title: 'محل العقد والمعاينة النافية للجهالة', content: 'عاين الطرف الثاني العقار المعاينة الشرعية التامة النافية للجهالة وقبله بحالته الراهنة.', isMandatory: true },
+          { id: 'cls-3', number: 3, title: 'الثمن وطريقة السداد والمخالصة', content: `اتفق الطرفان على القيمة الإجمالية وقدرها [${price.toLocaleString()} ${currency}] تسدد وفق جدول الدفعات المتفق عليه.`, isMandatory: true },
+          { id: 'cls-4', number: 4, title: 'التسليم والمسؤولية القانونية والتوثيق', content: 'يلتزم الطرف الأول بتسليم العقار خالياً من أي شواغل أو حقوق عينية للغير، مع تسليم أصول وثائق الملكية.', isMandatory: true }
         ],
         currentVersion: 1,
-        versionHistory: [],
+        versionHistory: [
+          {
+            version: 1,
+            createdAt: nowStr,
+            createdBy: { id: currentUser.id, name: currentUser.name, role: currentUser.role },
+            summaryOfChanges: 'إنشاء مسودة العقد واستيراد كافة بيانات الحجز والشروط ومواصفات العقار',
+            clauses: [
+              { id: 'cls-1', number: 1, title: 'التمهيد وأهلية التعاقد', content: 'يقر الطرفان بأهليتهما الشرعية والقانونية المعتبرة شرعاً للتعاقد والتصرف النافي للجهالة.', isMandatory: true },
+              { id: 'cls-2', number: 2, title: 'محل العقد والمعاينة النافية للجهالة', content: 'عاين الطرف الثاني العقار المعاينة الشرعية التامة النافية للجهالة وقبله بحالته الراهنة.', isMandatory: true },
+              { id: 'cls-3', number: 3, title: 'الثمن وطريقة السداد والمخالصة', content: `اتفق الطرفان على القيمة الإجمالية وقدرها [${price.toLocaleString()} ${currency}] تسدد وفق جدول الدفعات المتفق عليه.`, isMandatory: true },
+              { id: 'cls-4', number: 4, title: 'التسليم والمسؤولية القانونية والتوثيق', content: 'يلتزم الطرف الأول بتسليم العقار خالياً من أي شواغل أو حقوق عينية للغير، مع تسليم أصول وثائق الملكية.', isMandatory: true }
+            ],
+            financialTerms: {
+              totalAmount: price,
+              currency,
+              depositAmount: deposit,
+              paymentSchedule: contractType === 'lease'
+                ? 'سداد مبلغ التأمين والضمانة، وتسليم الأجرة مقدماً بموجب سند قبض رسمي'
+                : 'سداد العربون، وتسليم المتبقي بشيك مصرفي مصدق عند الإفراغ والتسليم'
+            },
+            status: 'draft'
+          }
+        ],
         createdAt: dateStr,
         updatedAt: dateStr
       });
+
+      embeddedStore.updateBooking(booking.id, { contractId: contract.id, contractNumber: contract.contractNumber, dealStage: 'contract_completed' });
+
       if (SupabaseAdapter.isConfigured()) {
         SupabaseAdapter.saveContract(contract).catch(e => console.warn('[Supabase Sync Contract]:', e));
       }
+      logAudit('إنشاء مسودة العقد', 'contract', contract.id, 'success', `إنشاء مسودة العقد ${contract.contractNumber}`);
     }
 
     return makeResponse(201, { message: 'تم إنشاء مسودة العقد بنجاح', contract });
+  }
+
+  // Update contract draft
+  if (path.startsWith('/api/contracts/') && !path.includes('/approve') && !path.includes('/sign') && !path.includes('/amend') && !path.includes('/respond-amendment') && !path.includes('/cancel') && method === 'PUT') {
+    const cid = path.replace('/api/contracts/', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+
+    const wasApproved = contract.status === 'approved' || contract.status === 'signed';
+    const newVersion = (contract.currentVersion || 1) + 1;
+
+    const updates: Partial<PropertyContract> = {
+      ...bodyData,
+      currentVersion: newVersion,
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+
+    if (wasApproved) {
+      updates.status = 'pending_approval';
+      updates.firstPartyApproval = false;
+      updates.secondPartyApproval = false;
+      updates.isModificationPendingApproval = true;
+      updates.modificationRequestedBy = currentUser.name;
+      updates.modificationReason = bodyData.summaryOfChanges || 'تعديل بنود العقد المعتمد';
+    }
+
+    const updated = embeddedStore.updateContract(cid, updates);
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Update Contract]:', e));
+    }
+    logAudit('تحديث بنود العقد', 'contract', cid, 'success', `تحديث العقد إلى الإصدار ${newVersion}`);
+    return makeResponse(200, { message: 'تم تحديث العقد بنجاح', contract: updated, wasApprovedModified: wasApproved });
+  }
+
+  // Approve contract (اعتماد العقد الرسمي)
+  if (path.startsWith('/api/contracts/') && path.endsWith('/approve') && method === 'POST') {
+    const cid = path.replace('/api/contracts/', '').replace('/approve', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+
+    const nowStr = new Date().toISOString();
+    const currVer = contract.currentVersion || 1;
+    const asParty = bodyData.asParty;
+
+    const isFirst = asParty === 'firstParty' || currentUser.id === contract.firstParty?.id || currentUser.role === 'advertiser';
+    const isSecond = asParty === 'secondParty' || currentUser.id === contract.secondParty?.id || currentUser.role === 'seeker';
+    const isAdmin = currentUser.role === 'system_admin' || asParty === 'admin';
+
+    let firstApproval = contract.firstPartyApproval;
+    let secondApproval = contract.secondPartyApproval;
+    let firstApprovedAt = contract.firstPartyApprovedAt;
+    let secondApprovedAt = contract.secondPartyApprovedAt;
+
+    if (isFirst || isAdmin) {
+      firstApproval = true;
+      firstApprovedAt = nowStr;
+    }
+    if (isSecond || isAdmin) {
+      secondApproval = true;
+      secondApprovedAt = nowStr;
+    }
+
+    const bothApproved = (firstApproval && secondApproval) || isAdmin;
+    const newStatus = bothApproved ? 'approved' : 'pending_approval';
+
+    const updated = embeddedStore.updateContract(cid, {
+      firstPartyApproval: firstApproval,
+      firstPartyApprovedAt: firstApprovedAt,
+      firstPartyApprovedVersion: currVer,
+      secondPartyApproval: secondApproval,
+      secondPartyApprovedAt: secondApprovedAt,
+      secondPartyApprovedVersion: currVer,
+      status: newStatus,
+      approvedAt: bothApproved ? nowStr : contract.approvedAt,
+      approvedBy: bothApproved ? currentUser.name : contract.approvedBy,
+      isModificationPendingApproval: false
+    });
+
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Approve Contract]:', e));
+    }
+
+    logAudit('اعتماد العقد', 'contract', cid, 'success', `اعتماد العقد ${contract.contractNumber} - الحالة: ${newStatus}`);
+    return makeResponse(200, {
+      message: bothApproved ? 'تم اعتماد العقد رسمياً من الطرفين وبات جاهزاً للتوقيع والتوثيق' : 'تم تسجيل اعتمادك للعقد بنجاح',
+      contract: updated
+    });
+  }
+
+  // Sign contract (التوقيع الإلكتروني المعتمد برقم الهوية)
+  if (path.startsWith('/api/contracts/') && path.endsWith('/sign') && method === 'POST') {
+    const cid = path.replace('/api/contracts/', '').replace('/sign', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+
+    const nowStr = new Date().toISOString();
+    const currVer = contract.currentVersion || 1;
+    const { partyRole = 'firstParty', nationalId = '', idGovernorate = 'صنعاء', signerPhone = '' } = bodyData;
+    const digitalFingerprint = `SIG-YE-v${currVer}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    const sigRecord = {
+      id: `sig-${Date.now()}`,
+      partyRole,
+      signerId: currentUser.id,
+      signerName: currentUser.name,
+      signerPhone: signerPhone || currentUser.phone || '+967 770 000 000',
+      nationalIdOrPassport: nationalId || '1010049281',
+      idGovernorate,
+      contractVersion: currVer,
+      signedAt: nowStr,
+      verificationCode: `OTP-${Math.floor(100000 + Math.random() * 900000)}`,
+      digitalFingerprint,
+      legalDisclaimerAcknowledged: true,
+      ipAddress: '127.0.0.1'
+    };
+
+    const existingSignatures = Array.isArray(contract.electronicSignatures) ? contract.electronicSignatures : [];
+    const signatures = [...existingSignatures.filter(s => s.partyRole !== partyRole), sigRecord];
+
+    const updatedFirstParty = { ...contract.firstParty };
+    const updatedSecondParty = { ...contract.secondParty };
+
+    if (partyRole === 'firstParty' || currentUser.id === contract.firstParty?.id || currentUser.role === 'advertiser') {
+      updatedFirstParty.signatureStatus = 'signed';
+      updatedFirstParty.signedAt = nowStr;
+      if (nationalId) updatedFirstParty.nationalIdOrPassport = nationalId;
+    }
+    if (partyRole === 'secondParty' || currentUser.id === contract.secondParty?.id || currentUser.role === 'seeker') {
+      updatedSecondParty.signatureStatus = 'signed';
+      updatedSecondParty.signedAt = nowStr;
+      if (nationalId) updatedSecondParty.nationalIdOrPassport = nationalId;
+    }
+
+    const bothSigned = (updatedFirstParty.signatureStatus === 'signed' && updatedSecondParty.signatureStatus === 'signed') || currentUser.role === 'system_admin';
+    const newStatus = bothSigned ? 'signed' : contract.status;
+
+    const updated = embeddedStore.updateContract(cid, {
+      firstParty: updatedFirstParty,
+      secondParty: updatedSecondParty,
+      electronicSignatures: signatures,
+      status: newStatus,
+      signedAt: bothSigned ? nowStr : contract.signedAt,
+      firstPartySignedVersion: currVer,
+      secondPartySignedVersion: currVer
+    });
+
+    if (bothSigned && contract.bookingId) {
+      embeddedStore.updateBooking(contract.bookingId, { dealStage: 'contract_completed' });
+    }
+
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Sign Contract]:', e));
+    }
+
+    logAudit('توقيع العقد إلكترونياً', 'contract', cid, 'success', `توقيع إلكتروني موثق على العقد ${contract.contractNumber}`);
+    return makeResponse(200, {
+      message: bothSigned ? 'اكتمل توقيع الطرفين على العقد رسمياً وأصبح جاهزاً للطباعة والتوثيق النهائي' : 'تم تسجيل التوقيع وتوثيقه بنجاح',
+      contract: updated
+    });
+  }
+
+  // Amend contract
+  if (path.startsWith('/api/contracts/') && path.endsWith('/amend') && method === 'POST') {
+    const cid = path.replace('/api/contracts/', '').replace('/amend', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+
+    const newVer = (contract.currentVersion || 1) + 1;
+    const updated = embeddedStore.updateContract(cid, {
+      currentVersion: newVer,
+      status: 'pending_approval',
+      firstPartyApproval: false,
+      secondPartyApproval: false,
+      isModificationPendingApproval: true,
+      modificationRequestedBy: currentUser.name,
+      modificationReason: bodyData.summaryOfChanges || 'طلب تعديل بنود العقد',
+      clauses: bodyData.clauses || contract.clauses,
+      financialTerms: bodyData.financialTerms || contract.financialTerms
+    });
+
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Amend Contract]:', e));
+    }
+    return makeResponse(200, { message: 'تم تقديم طلب التعديل بنجاح', contract: updated });
+  }
+
+  // Respond to amendment
+  if (path.startsWith('/api/contracts/') && path.endsWith('/respond-amendment') && method === 'POST') {
+    const cid = path.replace('/api/contracts/', '').replace('/respond-amendment', '');
+    const contract = embeddedStore.getContractById(cid);
+    if (!contract) return makeResponse(404, { error: 'العقد غير موجود' });
+
+    const { accept } = bodyData;
+    const updated = embeddedStore.updateContract(cid, {
+      isModificationPendingApproval: false,
+      status: accept ? 'approved' : 'pending_approval'
+    });
+
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Respond Amendment]:', e));
+    }
+    return makeResponse(200, { message: accept ? 'تم قبول التعديل واعتماد العقد' : 'تم رفض التعديل', contract: updated });
+  }
+
+  // Cancel contract
+  if (path.startsWith('/api/contracts/') && path.endsWith('/cancel') && method === 'POST') {
+    const cid = path.replace('/api/contracts/', '').replace('/cancel', '');
+    const updated = embeddedStore.updateContract(cid, { status: 'cancelled' });
+    if (updated && SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateContract(cid, updated).catch(e => console.warn('[Supabase Sync Cancel Contract]:', e));
+    }
+    return makeResponse(200, { message: 'تم إلغاء العقد بنجاح', contract: updated });
   }
 
   // 6. Local Admin Endpoints

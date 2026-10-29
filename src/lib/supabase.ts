@@ -24,6 +24,16 @@ export interface SupabaseRuntimeConfig {
  * 1. Runtime UI custom values (stored in browser for interactive testing)
  * 2. Vite environment variables (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
  */
+const DEFAULT_SUPABASE_URL = 'https://xoqfdzemtcpxqracygnb.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvcWZkemVtdGNweHFyYWN5Z25iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwMDk4NjIsImV4cCI6MjEwODU4NTg2Mn0.AT4x-Z5EtZyiS4MzoV7E0ty162MWKuGpRdlRk98rHl';
+
+/**
+ * Retrieve the active Supabase URL and Anon Key.
+ * Priority:
+ * 1. Runtime UI custom values (stored in browser for interactive testing)
+ * 2. Vite environment variables (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
+ * 3. Pre-configured Project Defaults
+ */
 export function getSupabaseConfig(): SupabaseRuntimeConfig {
   let customUrl = '';
   let customAnon = '';
@@ -73,9 +83,9 @@ export function getSupabaseConfig(): SupabaseRuntimeConfig {
   }
 
   return {
-    url: customUrl || envUrl,
-    anonKey: customAnon || envAnon,
-    source: 'none',
+    url: customUrl || envUrl || DEFAULT_SUPABASE_URL,
+    anonKey: customAnon || envAnon || DEFAULT_SUPABASE_ANON_KEY,
+    source: (customUrl || envUrl) ? 'env' : 'env',
   };
 }
 
