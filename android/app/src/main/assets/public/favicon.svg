@@ -1,0 +1,19 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Outer Dark Navy 'D' Frame with Top Roof Peak and Sweeping Loop -->
+  <path d="M 24 162 L 24 72 L 95 14 L 140 44 C 172 70 192 100 192 130 C 192 165 166 186 112 186 C 142 180 170 156 170 128 C 170 102 152 76 128 58 L 95 34 L 44 74 L 44 156 Z" fill="#16324F"/>
+  <!-- Inner Navy Roof Beam (Gable contour framing the towers) -->
+  <path d="M 52 76 L 88 46 L 134 78 L 124 86 L 88 56 L 60 84 Z" fill="#16324F"/>
+  <!-- Left Skyscraper Tower -->
+  <polygon points="63,90 81,78 81,146 63,146" fill="#16324F"/>
+  <!-- Right Skyscraper Tower -->
+  <polygon points="88,64 108,78 108,136 88,136" fill="#16324F"/>
+  <!-- Bottom-Right Navy Crescent -->
+  <path d="M 108 186 C 146 186 182 162 186 124 C 188 100 174 74 152 56 C 170 76 174 102 172 124 C 168 152 140 176 108 186 Z" fill="#16324F"/>
+  <!-- Emerald Green Curving Highway -->
+  <path d="M 40 186 C 65 182 86 168 110 150 C 130 136 141 125 144 122 C 137 127 120 144 96 162 C 73 178 56 184 40 186 Z" fill="#12A889"/>
+  <!-- Emerald Green Geolocation Pin Marker -->
+  <path d="M 144 97 C 138.5 97 134 101.5 134 107 C 134 113.5 141.5 122 144 125 C 146.5 122 154 113.5 154 107 C 154 101.5 149.5 97 144 97 Z" fill="#12A889"/>
+  <circle cx="144" cy="107" r="3.2" fill="#FFFFFF"/>
+
+</svg>

@@ -1742,43 +1742,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ durationHours, notes })
       });
       const contentType = res?.headers.get('content-type') || '';
-      if (res && res.ok && contentType.includes('application/json')) {
+      if (res && contentType.includes('application/json')) {
         const json = await res.json();
-        showToast(json.message || 'تم تأكيد الحجز المؤقت بنجاح', 'success');
-        await Promise.all([fetchRequestsAndBookings(), refreshData()]);
-        return { success: true, message: json.message, booking: json.booking };
+        if (res.ok) {
+          showToast(json.message || 'تم تأكيد الحجز المؤقت بنجاح', 'success');
+          await Promise.all([fetchRequestsAndBookings(), refreshData()]);
+          return { success: true, message: json.message, booking: json.booking };
+        } else {
+          // خطأ من الخادم أو تعارض حجز نشط (409)
+          const errorMsg = json.error || 'تعذر تأكيد الحجز';
+          showToast(errorMsg, 'error');
+          return { success: false, message: errorMsg };
+        }
       }
     } catch (err: any) {
       console.warn('[Dalani AppContext] acceptPropertyRequest network fallback:', err);
     }
 
     const targetReq = requests.find(r => r.id === requestId);
+    if (!targetReq) {
+      showToast('الطلب غير موجود', 'error');
+      return { success: false, message: 'الطلب غير موجود' };
+    }
+
+    // التحقق المحلي من عدم وجود حجز نشط سابق على العقار ذاته
+    const existingActive = bookings.find(b => b.listingId === targetReq.listingId && b.status === 'active' && new Date(b.expiresAt).getTime() > Date.now());
+    if (existingActive) {
+      const conflictMsg = 'تعذر تأكيد الحجز: هذا العقار محجوز حالياً بحجز مؤقت فعال لضمان الحصرية ولا يمكن حجز عقار محجوز بالتوازي.';
+      showToast(conflictMsg, 'error');
+      return { success: false, message: conflictMsg };
+    }
+
     const bkgNum = `BKG-2026-${Math.floor(2000 + Math.random() * 8000)}`;
     const newBooking: PropertyBooking = {
       id: `bk-${Date.now()}`,
       bookingNumber: bkgNum,
       requestId: requestId,
-      listingId: targetReq?.listingId || 'lst-1',
-      listingTitle: targetReq?.listingTitle || 'عقار محجوز',
-      listingNumber: targetReq?.listingNumber || 'YEM-111',
-      listingImage: targetReq?.listingImage || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
-      listingGovernorate: targetReq?.listingGovernorate || 'صنعاء',
-      listingPrice: targetReq?.listingPrice || 45000,
-      listingCurrency: targetReq?.listingCurrency || 'YER',
-      seekerId: targetReq?.seekerId || currentUser.id,
-      seekerName: targetReq?.seekerName || currentUser.name,
-      seekerPhone: targetReq?.seekerPhone || '778990011',
-      advertiserId: targetReq?.advertiserId || currentUser.id,
-      advertiserName: targetReq?.advertiserName || currentUser.name,
-      advertiserPhone: targetReq?.advertiserPhone || '777111222',
-      durationHours: durationHours || targetReq?.requestedDurationHours || 48,
+      listingId: targetReq.listingId,
+      listingTitle: targetReq.listingTitle || 'عقار محجوز',
+      listingNumber: targetReq.listingNumber || 'YEM-111',
+      listingImage: targetReq.listingImage || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
+      listingGovernorate: targetReq.listingGovernorate || 'صنعاء',
+      listingPrice: targetReq.listingPrice || 45000,
+      listingCurrency: targetReq.listingCurrency || 'YER',
+      seekerId: targetReq.seekerId || currentUser.id,
+      seekerName: targetReq.seekerName || currentUser.name,
+      seekerPhone: targetReq.seekerPhone || '778990011',
+      advertiserId: targetReq.advertiserId || currentUser.id,
+      advertiserName: targetReq.advertiserName || currentUser.name,
+      advertiserPhone: targetReq.advertiserPhone || '777111222',
+      durationHours: durationHours || targetReq.requestedDurationHours || 48,
       status: 'active',
       startDate: new Date().toISOString(),
       expiresAt: new Date(Date.now() + (durationHours || 48) * 3600 * 1000).toISOString(),
       confirmedBy: currentUser.id,
-      notes: notes || targetReq?.notes,
-      paymentMethod: targetReq?.paymentMethod,
-      rentalUsageType: targetReq?.rentalUsageType,
+      notes: notes || targetReq.notes,
+      paymentMethod: targetReq.paymentMethod,
+      rentalUsageType: targetReq.rentalUsageType,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

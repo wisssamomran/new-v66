@@ -55,6 +55,32 @@ import {
 } from 'lucide-react';
 import { ContractDocumentModal } from './ContractDocumentModal';
 
+/**
+ * تنظيف وتحويل الأرقام العربية والإنجليزية وإزالة الفواصل والرموز غير الرقمية
+ * تدعم: ٠١٢٣٤٥٦٧٨٩ و 0-9 مع السماح بالنقطة العشرية ومسح الحقل بالكامل دون إعادته لصفر
+ */
+export const sanitizeNumericInput = (raw: string): string => {
+  if (!raw) return '';
+  // تحويل الأرقام الهندية/العربية (٠-٩) والفارسية (۰-۹) إلى أرقام لاتينية (0-9)
+  const converted = raw
+    .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+    .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d).toString())
+    .replace(/٫/g, '.') // الفاصلة العشرية العربية
+    .replace(/[٬,\s]/g, ''); // إزالة الفواصل والمسافات
+  // الاحتفاظ بالأرقام ونقطة عشرية واحدة فقط
+  let result = '';
+  let hasDecimal = false;
+  for (const char of converted) {
+    if (char >= '0' && char <= '9') {
+      result += char;
+    } else if (char === '.' && !hasDecimal) {
+      result += char;
+      hasDecimal = true;
+    }
+  }
+  return result;
+};
+
 interface BookingDealWorkspaceModalProps {
   bookingId: string;
   isOpen: boolean;
@@ -117,11 +143,22 @@ export const BookingDealWorkspaceModal: React.FC<BookingDealWorkspaceModalProps>
   const toggleProposeTermsModal = (show: boolean) => {
     setShowProposeTermsModal(show);
     try { sessionStorage.setItem('dalani_deal_show_terms', String(show)); } catch {}
+
+    // عند فتح النافذة، إذا كان السعر فارغاً أو صفراً، نقوم بتهيئته تلقائياً من بيانات العقار أو الشروط السابقة
+    if (show && (!termsFormPrice || termsFormPrice === '0' || termsFormPrice === '')) {
+      const fallbackPrice = booking?.currentTerms?.price || booking?.agreedTerms?.price || booking?.listingPrice;
+      if (fallbackPrice && fallbackPrice > 0) {
+        setTermsFormPrice(String(fallbackPrice));
+        if (!termsFormDeposit || termsFormDeposit === '0' || termsFormDeposit === '') {
+          setTermsFormDeposit(String(Math.round(fallbackPrice * 0.05)));
+        }
+      }
+    }
   };
-  const [termsFormPrice, setTermsFormPrice] = useState<number>(0);
+  const [termsFormPrice, setTermsFormPrice] = useState<string>('');
   const [termsFormCurrency, setTermsFormCurrency] = useState<Currency>('USD');
   const [termsFormPaymentMethod, setTermsFormPaymentMethod] = useState<string>('certified_check');
-  const [termsFormDeposit, setTermsFormDeposit] = useState<number>(0);
+  const [termsFormDeposit, setTermsFormDeposit] = useState<string>('');
   const [termsFormHandoverDate, setTermsFormHandoverDate] = useState<string>('');
   const [termsFormFeeBy, setTermsFormFeeBy] = useState<'shared_equally' | 'buyer_only' | 'seller_only' | 'tenant_only'>('shared_equally');
   const [termsFormSpecialConditions, setTermsFormSpecialConditions] = useState<string[]>([]);
@@ -268,19 +305,19 @@ export const BookingDealWorkspaceModal: React.FC<BookingDealWorkspaceModalProps>
       const booking: PropertyBooking = res.data.booking;
       const initialTerms = booking.currentTerms || booking.agreedTerms;
       if (initialTerms) {
-        setTermsFormPrice(initialTerms.price || booking.listingPrice || 0);
+        setTermsFormPrice(initialTerms.price ? String(initialTerms.price) : (booking.listingPrice ? String(booking.listingPrice) : ''));
         setTermsFormCurrency(initialTerms.currency || booking.listingCurrency || 'USD');
         setTermsFormPaymentMethod(initialTerms.paymentMethod || 'certified_check');
-        setTermsFormDeposit(initialTerms.depositAmount || Math.round((initialTerms.price || 0) * 0.05));
+        setTermsFormDeposit(initialTerms.depositAmount !== undefined && initialTerms.depositAmount !== null ? String(initialTerms.depositAmount) : (initialTerms.price ? String(Math.round(initialTerms.price * 0.05)) : ''));
         setTermsFormHandoverDate(initialTerms.handoverDate || '');
         setTermsFormFeeBy(initialTerms.feeResponsibility || 'shared_equally');
         setTermsFormSpecialConditions(initialTerms.specialConditions || []);
         setTermsFormNotes(initialTerms.notes || '');
       } else {
-        setTermsFormPrice(booking.listingPrice || 0);
+        setTermsFormPrice(booking.listingPrice ? String(booking.listingPrice) : '');
         setTermsFormCurrency(booking.listingCurrency || 'USD');
         setTermsFormPaymentMethod(booking.paymentMethod || 'certified_check');
-        setTermsFormDeposit(Math.round((booking.listingPrice || 0) * 0.05));
+        setTermsFormDeposit(booking.listingPrice ? String(Math.round(booking.listingPrice * 0.05)) : '');
         setTermsFormHandoverDate('');
         setTermsFormFeeBy('shared_equally');
         setTermsFormSpecialConditions([
@@ -417,18 +454,38 @@ export const BookingDealWorkspaceModal: React.FC<BookingDealWorkspaceModalProps>
     e.preventDefault();
     if (!booking) return;
 
-    if (termsFormPrice <= 0) {
-      showToast('يرجى تحديد سعر صالح للعقار', 'error');
+    // تنظيف وتحويل السعر المقترح
+    const cleanPriceStr = sanitizeNumericInput(termsFormPrice);
+    const parsedPrice = parseFloat(cleanPriceStr);
+
+    if (!cleanPriceStr || isNaN(parsedPrice) || parsedPrice <= 0) {
+      showToast('يرجى تحديد سعر مقترح صالح وأكبر من صفر', 'error');
       return;
+    }
+
+    // تنظيف وتحويل مبلغ العربون (إن وُجد)
+    const cleanDepositStr = sanitizeNumericInput(termsFormDeposit);
+    let parsedDeposit: number | undefined = undefined;
+    if (cleanDepositStr) {
+      const depNum = parseFloat(cleanDepositStr);
+      if (isNaN(depNum) || depNum < 0) {
+        showToast('مبلغ العربون غير صالح، يرجى إدخال قيمة صحيحة', 'error');
+        return;
+      }
+      if (depNum > parsedPrice) {
+        showToast('مبلغ العربون لا يمكن أن يتجاوز السعر الإجمالي المقترح', 'error');
+        return;
+      }
+      parsedDeposit = depNum;
     }
 
     setIsSubmittingTerms(true);
     try {
       const termsPayload: DealTerms = {
-        price: Number(termsFormPrice),
+        price: parsedPrice,
         currency: termsFormCurrency,
         paymentMethod: termsFormPaymentMethod,
-        depositAmount: Number(termsFormDeposit) || undefined,
+        depositAmount: parsedDeposit,
         depositCurrency: termsFormCurrency,
         handoverDate: termsFormHandoverDate || undefined,
         feeResponsibility: termsFormFeeBy,
@@ -2549,14 +2606,33 @@ export const BookingDealWorkspaceModal: React.FC<BookingDealWorkspaceModalProps>
             <form onSubmit={handleSubmitProposeTerms} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">السعر المقترح:</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700 block">السعر المقترح: <span className="text-rose-500">*</span></label>
+                    {booking?.listingPrice ? (
+                      <button
+                        type="button"
+                        onClick={() => setTermsFormPrice(String(booking.listingPrice))}
+                        className="text-[10px] text-[#12A889] hover:underline cursor-pointer font-bold"
+                      >
+                        سعر الإعلان ({booking.listingPrice.toLocaleString()} {booking.listingCurrency || termsFormCurrency})
+                      </button>
+                    ) : null}
+                  </div>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
                     value={termsFormPrice}
-                    onChange={e => setTermsFormPrice(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:bg-white focus:border-[#12A889] outline-none"
+                    onChange={e => setTermsFormPrice(sanitizeNumericInput(e.target.value))}
+                    placeholder="مثال: 50000"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:bg-white focus:border-[#12A889] outline-none text-right transition-colors"
                     required
                   />
+                  {termsFormPrice && !isNaN(parseFloat(sanitizeNumericInput(termsFormPrice))) && parseFloat(sanitizeNumericInput(termsFormPrice)) > 0 ? (
+                    <div className="text-[10px] text-slate-500 mt-1 font-mono text-left" dir="ltr">
+                      = {parseFloat(sanitizeNumericInput(termsFormPrice)).toLocaleString()} {termsFormCurrency}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div>
@@ -2589,13 +2665,32 @@ export const BookingDealWorkspaceModal: React.FC<BookingDealWorkspaceModalProps>
                 </div>
 
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">مبلغ العربون المبدئي:</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700 block">مبلغ العربون المبدئي:</label>
+                    {termsFormPrice && !isNaN(parseFloat(sanitizeNumericInput(termsFormPrice))) && parseFloat(sanitizeNumericInput(termsFormPrice)) > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setTermsFormDeposit(String(Math.round(parseFloat(sanitizeNumericInput(termsFormPrice)) * 0.05)))}
+                        className="text-[10px] text-slate-500 hover:text-[#12A889] hover:underline cursor-pointer font-bold"
+                      >
+                        احتساب 5% تلقائياً
+                      </button>
+                    ) : null}
+                  </div>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
+                    dir="ltr"
                     value={termsFormDeposit}
-                    onChange={e => setTermsFormDeposit(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:bg-white focus:border-[#12A889] outline-none"
+                    onChange={e => setTermsFormDeposit(sanitizeNumericInput(e.target.value))}
+                    placeholder="مثال: 5000 (اختياري)"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:bg-white focus:border-[#12A889] outline-none text-right transition-colors"
                   />
+                  {termsFormDeposit && !isNaN(parseFloat(sanitizeNumericInput(termsFormDeposit))) && parseFloat(sanitizeNumericInput(termsFormDeposit)) > 0 ? (
+                    <div className="text-[10px] text-slate-500 mt-1 font-mono text-left" dir="ltr">
+                      = {parseFloat(sanitizeNumericInput(termsFormDeposit)).toLocaleString()} {termsFormCurrency}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 

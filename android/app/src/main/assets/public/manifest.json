@@ -1,0 +1,31 @@
+{
+  "short_name": "دلنّي",
+  "name": "دلنّي - المنصة العقارية اليمنية",
+  "description": "المنصة العقارية اليمنية الرائدة لاكتشاف العقارات، والبحث المتقدم والخريطة التفاعلية، وإدارة الإعلانات، والتحقق، والمنشآت العقارية.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#16324F",
+  "background_color": "#FFFFFF",
+  "orientation": "portrait-primary",
+  "lang": "ar",
+  "dir": "rtl"
+}

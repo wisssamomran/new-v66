@@ -435,14 +435,62 @@ export async function runSupabaseLifecycleTestSuite(
 
     if (!conflictErr) {
       // إذا سمحت قاعدة البيانات بالحجز المزدوج، فهذا فشل أمني!
-      throw new Error('فشل الفحص الأمني: قاعدة البيانات سمحت بحجزين نشطين في نفس اللحظة لنفس العقار!');
+      throw new Error('فشل الفحص الأمني: قاعدة البيانات سمحت بحجزين نشطين في نفس اللحظة لنفس العقار دون تفعيل القيد الفريد!');
     }
 
-    // النجاح هنا هو أن ترفض قاعدة البيانات الحجز المزدوج بموجب الزناد أو القيد الفريد
+    // التحقق الصارم من أن سبب الرفض هو انتهاك الفهرس الفريد idx_single_active_booking_per_listing (كود 23505)
+    const errCode = (conflictErr as any)?.code || '';
+    const errMsg = conflictErr.message || '';
+    const errDetails = (conflictErr as any)?.details || '';
+    const combinedErr = `${errCode} ${errMsg} ${errDetails}`;
+
+    const isUniqueConstraintViolation =
+      errCode === '23505' ||
+      combinedErr.includes('idx_single_active_booking_per_listing') ||
+      combinedErr.includes('23505') ||
+      combinedErr.includes('duplicate key value') ||
+      combinedErr.includes('trg_prevent_booking_conflict') ||
+      combinedErr.includes('العقار محجوز');
+
+    if (!isUniqueConstraintViolation) {
+      throw new Error(`تم رفض الحجز ولكن بسبب خطأ غير متوقع وليس بسبب قيد منع التعارض: ${errMsg}`);
+    }
+
+    // التحقق الصارم من أن الحجز الأول الأصلي ما زال سليماً ونشطاً في قاعدة البيانات
+    const { data: firstBooking, error: firstErr } = await client
+      .from('property_bookings')
+      .select('id, status, listing_id')
+      .eq('id', testBookingId1)
+      .single();
+
+    if (firstErr || !firstBooking) {
+      throw new Error(`فشل الفحص: تعذر العثور على الحجز الأول الأصلي (${testBookingId1}) بعد رفض الحجز المتعارض!`);
+    }
+
+    if (firstBooking.status !== 'active') {
+      throw new Error(`فشل الفحص: تأثرت حالة الحجز الأول وتغيرت إلى (${firstBooking.status}) بدلاً من active!`);
+    }
+
+    // التحقق من أن العقار نفسه لا يزال محجوزاً حصرياً ولم يُفك حجزه بالخطأ
+    const { data: listingData, error: listingErr } = await client
+      .from('listings')
+      .select('id, is_reserved, active_booking_id')
+      .eq('id', testListingId)
+      .single();
+
+    if (listingErr || !listingData) {
+      throw new Error('تعذر التحقق من بيانات العقار بعد فحص التعارض.');
+    }
+
+    if (!listingData.is_reserved) {
+      throw new Error('فشل الفحص: تم إلغاء حجز العقار (is_reserved = false) بسبب فشل الحجز المتعارض!');
+    }
+
+    // النجاح هنا هو أن ترفض قاعدة البيانات الحجز المزدوج بموجب القيد الفريد 23505 مع سلامة الحجز الأول
     updateStep(6, {
       status: 'success',
       durationMs: Date.now() - s6Start,
-      details: `نجح صمام الحماية: رفضت قاعدة البيانات الحجز المتعارض بنجاح. رسالة الخطأ المرفوضة: "${conflictErr.message}".`
+      details: `نجح صمام الحماية: رفضت قاعدة البيانات الحجز المتعارض بنجاح بموجب قيد الفهرس [idx_single_active_booking_per_listing / 23505]. وتأكد سلامة الحجز الأول الأصلي (${testBookingId1}) وبقاء العقار محجوزاً حصرياً (is_reserved = true).`
     });
   } catch (err: any) {
     updateStep(6, {
@@ -451,7 +499,7 @@ export async function runSupabaseLifecycleTestSuite(
       errorMessage: err.message
     });
     await safeCleanup(client, testRunId);
-    return finalizeResult(startTime, steps, false, 'فشل اختبار صمام منع التعارض.');
+    return finalizeResult(startTime, steps, false, 'فشل اختبار صمام منع التعارض وقيد الفهرس الفريد.');
   }
 
   // الخطوة 8: العقد والتوقيع الإلكتروني
@@ -680,7 +728,7 @@ function finalizeResult(
   return {
     runAt: new Date().toISOString(),
     totalDurationMs: Date.now() - startTime,
-    allPassed: failedSteps === 0 && passedSteps > 0,
+    allPassed: failedSteps === 0 && skippedSteps === 0 && passedSteps === totalSteps,
     totalSteps,
     passedSteps,
     failedSteps,

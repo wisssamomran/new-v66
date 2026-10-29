@@ -196,7 +196,7 @@ export async function handleLocalApiCall(
 
     const activeB = embeddedStore.getActiveBookingForListing(reqItem.listingId);
     if (activeB) {
-      return makeResponse(409, { error: 'يوجد حجز مؤقت فعال على هذا العقار حالياً.' });
+      return makeResponse(409, { error: 'تعذر تأكيد الحجز: يوجد حجز مؤقت فعال على هذا العقار حالياً لضمان الحصرية بموجب قيد المنظومة.' });
     }
 
     const durationHours = bodyData.durationHours || 48;
@@ -228,13 +228,19 @@ export async function handleLocalApiCall(
       updatedAt: now.toISOString().split('T')[0]
     };
 
+    if (SupabaseAdapter.isConfigured()) {
+      const syncResult = await SupabaseAdapter.saveBooking(newBooking);
+      if (!syncResult.success && syncResult.isConflict) {
+        return makeResponse(409, { error: syncResult.error || 'تعذر تأكيد الحجز: هذا العقار محجوز حالياً بحجز مؤقت فعال في قاعدة البيانات.' });
+      }
+      if (syncResult.success) {
+        SupabaseAdapter.updateRequest(reqItem.id, { status: 'accepted', bookingId: newBooking.id }).catch(e => console.warn('[Supabase Sync Request Update]:', e));
+      }
+    }
+
     embeddedStore.addBooking(newBooking);
     embeddedStore.updateRequest(reqItem.id, { status: 'accepted', bookingId: newBooking.id });
     logAudit('تأكيد الحجز المؤقت', 'booking', newBooking.id, 'success', `حجز مؤقت برقم ${newBooking.bookingNumber}`);
-    if (SupabaseAdapter.isConfigured()) {
-      SupabaseAdapter.saveBooking(newBooking).catch(e => console.warn('[Supabase Sync Booking]:', e));
-      SupabaseAdapter.updateRequest(reqItem.id, { status: 'accepted', bookingId: newBooking.id }).catch(e => console.warn('[Supabase Sync Request Update]:', e));
-    }
     return makeResponse(201, { message: 'تم تأكيد الحجز المؤقت بنجاح', booking: newBooking });
   }
 
@@ -311,7 +317,168 @@ export async function handleLocalApiCall(
     return makeResponse(201, { message: 'تم إنشاء مسودة العقد بنجاح', contract });
   }
 
-  // 6. Local Offline AI Assistant Endpoint
+  // 6. Local Admin Endpoints
+  if (path === '/api/admin/users') {
+    const users = embeddedStore.getUsers();
+    return makeResponse(200, { users, count: users.length });
+  }
+
+  if (path === '/api/admin/staff' && method === 'GET') {
+    const staff = embeddedStore.getStaff();
+    return makeResponse(200, { staff, count: staff.length });
+  }
+
+  if (path === '/api/admin/staff' && method === 'POST') {
+    const newStaff = embeddedStore.addStaff(bodyData);
+    logAudit('إنشاء موظف محلياً', 'staff', newStaff.id, 'success', `إنشاء موظف ${newStaff.name}`);
+    return makeResponse(201, { message: 'تم إنشاء الموظف بنجاح', staff: newStaff });
+  }
+
+  if (path.includes('/api/admin/staff/') && path.endsWith('/status')) {
+    const id = path.replace('/api/admin/staff/', '').replace('/status', '');
+    const updated = embeddedStore.toggleStaffStatus(id);
+    return makeResponse(200, { message: 'تم تحديث حالة الموظف بنجاح', staff: updated });
+  }
+
+  if (path.includes('/api/admin/staff/') && path.endsWith('/permissions')) {
+    const id = path.replace('/api/admin/staff/', '').replace('/permissions', '');
+    const updated = embeddedStore.updateStaffPermissions(id, bodyData.permissions || []);
+    return makeResponse(200, { message: 'تم تحديث الصلاحيات بنجاح', staff: updated });
+  }
+
+  if (path === '/api/admin/roles-matrix' && method === 'GET') {
+    return makeResponse(200, { rolesMatrix: embeddedStore.getRolesMatrix() });
+  }
+
+  if (path === '/api/admin/roles-matrix' && method === 'PUT') {
+    const matrix = embeddedStore.updateRolesMatrix(bodyData.rolesMatrix || bodyData);
+    return makeResponse(200, { message: 'تم حفظ مصفوفة الصلاحيات', rolesMatrix: matrix });
+  }
+
+  if (path === '/api/admin/sessions') {
+    const sessions = embeddedStore.getActiveSessions();
+    return makeResponse(200, { sessions, count: sessions.length });
+  }
+
+  if (path.startsWith('/api/admin/sessions/') && method === 'DELETE') {
+    const sid = path.replace('/api/admin/sessions/', '');
+    embeddedStore.terminateSession(sid);
+    return makeResponse(200, { message: 'تم إنهاء الجلسة بنجاح' });
+  }
+
+  if (path === '/api/admin/security/threats') {
+    const threats = embeddedStore.getThreats();
+    return makeResponse(200, { threats, count: threats.length });
+  }
+
+  if (path === '/api/admin/security/blocked-ips') {
+    const blockedIps = embeddedStore.getBlockedIps();
+    return makeResponse(200, { blockedIps, count: blockedIps.length });
+  }
+
+  if (path === '/api/admin/security/block-ip') {
+    const blocked = embeddedStore.blockIp(bodyData.ip, bodyData.reason, currentUser.name);
+    return makeResponse(200, { message: 'تم حظر الـ IP بنجاح', blocked });
+  }
+
+  if (path === '/api/admin/security/unblock-ip') {
+    embeddedStore.unblockIp(bodyData.ip);
+    return makeResponse(200, { message: 'تم فك الحظر بنجاح' });
+  }
+
+  if (path === '/api/admin/settings' && method === 'GET') {
+    return makeResponse(200, { settings: embeddedStore.getSystemSettings() });
+  }
+
+  if (path === '/api/admin/settings' && method === 'PUT') {
+    const settings = embeddedStore.updateSystemSettings(bodyData);
+    return makeResponse(200, { message: 'تم حفظ الإعدادات', settings });
+  }
+
+  if (path === '/api/admin/feature-flags') {
+    return makeResponse(200, { featureFlags: embeddedStore.getFeatureFlags() });
+  }
+
+  if (path.includes('/api/admin/feature-flags/') && path.endsWith('/toggle')) {
+    const key = path.replace('/api/admin/feature-flags/', '').replace('/toggle', '');
+    const flag = embeddedStore.toggleFeatureFlag(key);
+    return makeResponse(200, { message: 'تم تغيير حالة الميزة', flag });
+  }
+
+  if (path === '/api/admin/backups') {
+    return makeResponse(200, { backups: embeddedStore.getBackups() });
+  }
+
+  if (path === '/api/admin/backups/create') {
+    const backup = embeddedStore.createBackup(currentUser.name, bodyData.notes);
+    return makeResponse(201, { message: 'تم إنشاء النسخة الاحتياطية', backup });
+  }
+
+  if (path === '/api/admin/backups/restore') {
+    const res = embeddedStore.restoreBackup(bodyData.backupId, currentUser.name);
+    return makeResponse(200, res);
+  }
+
+  if (path === '/api/admin/system/errors') {
+    return makeResponse(200, { errors: embeddedStore.getSystemErrors() });
+  }
+
+  if (path.includes('/api/admin/system/errors/') && path.endsWith('/resolve')) {
+    const id = path.replace('/api/admin/system/errors/', '').replace('/resolve', '');
+    const err = embeddedStore.resolveSystemError(id, currentUser.name);
+    return makeResponse(200, { message: 'تم معالجة الخطأ', error: err });
+  }
+
+  if (path === '/api/admin/database/integrity-check') {
+    return makeResponse(200, { report: embeddedStore.checkDataIntegrity() });
+  }
+
+  if (path === '/api/admin/database/repair') {
+    const result = embeddedStore.repairDataIntegrity();
+    return makeResponse(200, { message: 'تم إصلاح قاعدة البيانات', result });
+  }
+
+  if (path === '/api/admin/integrations') {
+    return makeResponse(200, { integrations: embeddedStore.getIntegrations() });
+  }
+
+  if (path.includes('/api/admin/integrations/') && path.endsWith('/ping')) {
+    const id = path.replace('/api/admin/integrations/', '').replace('/ping', '');
+    const updated = embeddedStore.updateIntegrationStatus(id, { status: 'online', latencyMs: 45 });
+    return makeResponse(200, { message: 'تم فحص الاتصال بنجاح', integration: updated });
+  }
+
+  if (path === '/api/admin/escalations') {
+    return makeResponse(200, { escalations: embeddedStore.getEscalations() });
+  }
+
+  if (path.includes('/api/admin/escalations/') && path.endsWith('/resolve')) {
+    const id = path.replace('/api/admin/escalations/', '').replace('/resolve', '');
+    const resolved = embeddedStore.resolveEscalation(id, bodyData.status, bodyData.notes);
+    return makeResponse(200, { message: 'تم تسجيل القرار الإداري', escalation: resolved });
+  }
+
+  if (path === '/api/admin/reports/summary') {
+    return makeResponse(200, {
+      summary: {
+        totalListings: embeddedStore.getListings().length,
+        publishedListings: embeddedStore.getListings().filter(l => l.status === 'published').length,
+        totalUsers: embeddedStore.getUsers().length,
+        activeStaff: embeddedStore.getStaff().filter(s => s.activeStatus).length,
+        totalStaff: embeddedStore.getStaff().length,
+        totalOrganizations: embeddedStore.getOrganizations().length,
+        openReports: embeddedStore.getReports().filter(r => r.status === 'new').length,
+        openTickets: embeddedStore.getTickets().filter(t => t.status === 'open').length,
+        blockedIpsCount: embeddedStore.getBlockedIps().length,
+        activeSessionsCount: embeddedStore.getActiveSessions().length,
+        securityThreatsCount: embeddedStore.getThreats().length,
+        systemHealth: '100% Operational',
+        lastBackupAt: embeddedStore.getBackups()[0]?.createdAt || '2026-10-28 02:00'
+      }
+    });
+  }
+
+  // 7. Local Offline AI Assistant Endpoint
   if (path === '/api/ai/chat' && method === 'POST') {
     const { message, currentView } = bodyData;
     const aiResponse = generateClientAiResponse(currentUser, message || '', currentView || 'home');
@@ -323,6 +490,6 @@ export async function handleLocalApiCall(
     });
   }
 
-  // 7. Fallback for any other API route
+  // 8. Fallback for any other API route
   return makeResponse(200, { success: true, message: 'عملية أوفلاين مكتملة محلياً' });
 }

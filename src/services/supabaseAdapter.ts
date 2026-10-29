@@ -253,7 +253,38 @@ export class SupabaseAdapter {
     }
   }
 
-  static async saveBooking(booking: PropertyBooking): Promise<{ success: boolean; error?: string }> {
+  /**
+   * ترجمة وتفسير أخطاء قاعدة البيانات وخصوصاً خطأ انتهاك الفهرس الفريد 23505 للحجوزات المتزامنة
+   */
+  static parseBookingError(error: any): { isConflict: boolean; message: string } {
+    if (!error) return { isConflict: false, message: 'حدث خطأ غير معروف' };
+    const code = error.code || '';
+    const msg = error.message || '';
+    const details = error.details || '';
+    const combined = `${code} ${msg} ${details}`;
+
+    const isConflict =
+      code === '23505' ||
+      combined.includes('idx_single_active_booking_per_listing') ||
+      combined.includes('23505') ||
+      combined.includes('duplicate key value') ||
+      combined.includes('trg_prevent_booking_conflict') ||
+      combined.includes('العقار محجوز');
+
+    if (isConflict) {
+      return {
+        isConflict: true,
+        message: 'تعذر تأكيد الحجز: هذا العقار محجوز حالياً بحجز مؤقت فعال لضمان الحصرية ولا يمكن إنشاء حجز آخر بالتوازي بموجب قيد المنظومة (idx_single_active_booking_per_listing).'
+      };
+    }
+
+    return {
+      isConflict: false,
+      message: msg || 'حدث خطأ أثناء معالجة الحجز'
+    };
+  }
+
+  static async saveBooking(booking: PropertyBooking): Promise<{ success: boolean; error?: string; isConflict?: boolean }> {
     const client = getSupabaseClient();
     if (!client) return { success: false, error: 'Supabase غير مهيأ' };
 
@@ -263,14 +294,18 @@ export class SupabaseAdapter {
         .from('property_bookings')
         .upsert(payload, { onConflict: 'id' });
 
-      if (error) return { success: false, error: error.message };
+      if (error) {
+        const parsed = this.parseBookingError(error);
+        return { success: false, error: parsed.message, isConflict: parsed.isConflict };
+      }
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      const parsed = this.parseBookingError(err);
+      return { success: false, error: parsed.message, isConflict: parsed.isConflict };
     }
   }
 
-  static async updateBooking(id: string, updates: Partial<PropertyBooking>): Promise<{ success: boolean; error?: string }> {
+  static async updateBooking(id: string, updates: Partial<PropertyBooking>): Promise<{ success: boolean; error?: string; isConflict?: boolean }> {
     const client = getSupabaseClient();
     if (!client) return { success: false, error: 'Supabase غير مهيأ' };
 
@@ -291,10 +326,14 @@ export class SupabaseAdapter {
         .update(payload)
         .eq('id', id);
 
-      if (error) return { success: false, error: error.message };
+      if (error) {
+        const parsed = this.parseBookingError(error);
+        return { success: false, error: parsed.message, isConflict: parsed.isConflict };
+      }
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      const parsed = this.parseBookingError(err);
+      return { success: false, error: parsed.message, isConflict: parsed.isConflict };
     }
   }
 
