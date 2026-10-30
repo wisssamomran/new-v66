@@ -1161,11 +1161,11 @@ export const MOCK_USERS: Record<string, User> = {
     createdAt: '2026-01-01'
   },
   seeker: {
-    id: 'usr-seeker',
-    name: 'أصيل محمد الحكيمي',
+    id: 'usr-seeker-1',
+    name: 'أحمد العولقي',
     phone: '778990011',
     phoneVerified: true,
-    email: 'aseel@example.com',
+    email: 'ahmed.alawlaqi@dalani.ye',
     role: 'seeker',
     activeStatus: true,
     avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',

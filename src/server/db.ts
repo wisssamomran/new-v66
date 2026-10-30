@@ -452,8 +452,8 @@ export function normalizeContract(c: any): PropertyContract {
       signatureStatus: c.firstParty?.signatureStatus || 'unsigned'
     },
     secondParty: c.secondParty || {
-      id: 'usr-seeker',
-      name: 'أصيل محمد الحكيمي',
+      id: 'usr-seeker-1',
+      name: 'أحمد العولقي',
       phone: '+967 778 990 011',
       role: contractType === 'sale' ? 'buyer' : 'lessee',
       nationalIdOrPassport: 'بطاقة شخصية رقم 01020081734',
@@ -617,8 +617,8 @@ function getDefaultContracts(
       signedAt: '2026-10-18 10:30'
     },
     secondParty: {
-      id: seekerUser?.id || 'usr-seeker',
-      name: seekerUser?.name || 'أصيل محمد الحكيمي',
+      id: seekerUser?.id || 'usr-seeker-1',
+      name: seekerUser?.name || 'أحمد العولقي',
       phone: seekerUser?.phone || '+967 778 990 011',
       role: 'buyer',
       nationalIdOrPassport: 'بطاقة شخصية رقم 01020081734 صادرة من أمانة العاصمة',
