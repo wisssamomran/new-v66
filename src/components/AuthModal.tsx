@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
+import { NEW_SEEKERS } from '../data/yemenData';
 import {
   Lock,
   Phone,
@@ -30,10 +31,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = 'login',
   redirectReason
 }) => {
-  const { setCurrentUserRole, showToast } = useApp();
+  const { setCurrentUserRole, loginUser, showToast } = useApp();
 
   const [mode, setMode] = useState<'login' | 'register' | 'otp' | 'forgot'>(initialMode);
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Form Fields
   const [phoneOrEmail, setPhoneOrEmail] = useState('');
@@ -50,17 +52,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneOrEmail.trim() || !password.trim()) {
       showToast('يرجى إدخال رقم الهاتف أو البريد وكلمة المرور', 'warning');
       return;
     }
 
-    // Determine role based on input or log in as active seeker/advertiser
-    setCurrentUserRole('seeker');
-    showToast('تم تسجيل الدخول بنجاح! مرحباً بك في دلنّي', 'success');
-    onClose();
+    setIsLoading(true);
+    try {
+      const ok = await loginUser({ identifier: phoneOrEmail.trim(), password });
+      if (ok) {
+        showToast('تم تسجيل الدخول بنجاح! مرحباً بك في دلنّي', 'success');
+        onClose();
+      } else {
+        showToast('تعذر التحقق من الحساب، يرجى التأكد من البريد أو الهاتف وكلمة المرور', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'حدث خطأ أثناء محاولة تسجيل الدخول', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleRegisterSubmit = (e: React.FormEvent) => {
@@ -195,9 +207,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             <button
               type="submit"
-              className="w-full py-3 bg-[#12A889] hover:bg-[#0f8d73] text-white font-bold rounded-xl shadow-md transition-colors text-sm mt-2"
+              disabled={isLoading}
+              className="w-full py-3 bg-[#12A889] hover:bg-[#0f8d73] disabled:opacity-50 text-white font-bold rounded-xl shadow-md transition-colors text-sm mt-2 flex items-center justify-center gap-2"
             >
-              دخول إلى الحساب
+              {isLoading ? 'جاري التحقق وتسجيل الدخول...' : 'دخول إلى الحساب'}
             </button>
           </form>
         )}
@@ -387,8 +400,64 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
+        {/* 5 NEW SEEKERS DEDICATED TESTING BUTTONS */}
+        <div className="mt-6 pt-4 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-[#16324F] flex items-center gap-1.5">
+              <UserIcon className="w-3.5 h-3.5 text-[#12A889]" />
+              حسابات الباحثين الخمسة الجدد (Seekers) للاختبار المباشر:
+            </span>
+            <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+              ربط مستقل 100%
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {NEW_SEEKERS.map((seeker) => (
+              <button
+                key={seeker.id}
+                type="button"
+                disabled={isLoading}
+                onClick={async () => {
+                  setIsLoading(true);
+                  try {
+                    const ok = await loginUser({ identifier: seeker.email || seeker.phone || seeker.id });
+                    if (ok) {
+                      showToast(`تم تسجيل الدخول بنجاح بحساب: ${seeker.name}`, 'success');
+                      onClose();
+                    } else {
+                      showToast('تعذر العثور على المستخدم في قاعدة البيانات', 'error');
+                    }
+                  } catch (err: any) {
+                    showToast(err.message, 'error');
+                  } finally {
+                    setIsLoading(false);
+                  }
+                }}
+                className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-emerald-50/60 border border-slate-200 hover:border-emerald-300 text-right transition-all group"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-100 text-[#16324F] font-bold text-xs flex items-center justify-center">
+                    {seeker.name.slice(0, 1)}
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-800 text-xs group-hover:text-emerald-700 transition-colors">
+                      {seeker.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono" dir="ltr">
+                      {seeker.email} • {seeker.phone}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                  {seeker.id}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* 1-CLICK ROLE QUICK TESTING BUTTONS */}
-        <div className="mt-6 pt-5 border-t border-slate-100 space-y-2">
+        <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
           <div className="flex items-center gap-1.5 text-xs text-slate-500 font-bold">
             <Sparkles className="w-3.5 h-3.5 text-[#12A889]" />
             <span>تسجيل دخول سريع لتجربة صلاحيات الأدوار:</span>

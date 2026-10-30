@@ -1150,6 +1150,69 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   }
 ];
 
+export const NEW_SEEKERS: User[] = [
+  {
+    id: 'new-seeker-001',
+    supabaseUserId: 'a0000001-0000-0000-0000-000000000001',
+    name: 'محمد أحمد العريقي',
+    phone: '770123001',
+    phoneVerified: true,
+    email: 'seeker1@dalani.ye',
+    role: 'seeker',
+    activeStatus: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2026-03-01'
+  },
+  {
+    id: 'new-seeker-002',
+    supabaseUserId: 'a0000001-0000-0000-0000-000000000002',
+    name: 'عبدالله محمد اليافعي',
+    phone: '770123002',
+    phoneVerified: true,
+    email: 'seeker2@dalani.ye',
+    role: 'seeker',
+    activeStatus: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2026-03-01'
+  },
+  {
+    id: 'new-seeker-003',
+    supabaseUserId: 'a0000001-0000-0000-0000-000000000003',
+    name: 'خالد علي الحضرمي',
+    phone: '770123003',
+    phoneVerified: true,
+    email: 'seeker3@dalani.ye',
+    role: 'seeker',
+    activeStatus: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1527980965255-d3b416303d12?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2026-03-01'
+  },
+  {
+    id: 'new-seeker-004',
+    supabaseUserId: 'a0000001-0000-0000-0000-000000000004',
+    name: 'أحمد صالح الشامي',
+    phone: '770123004',
+    phoneVerified: true,
+    email: 'seeker4@dalani.ye',
+    role: 'seeker',
+    activeStatus: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2026-03-01'
+  },
+  {
+    id: 'new-seeker-005',
+    supabaseUserId: 'a0000001-0000-0000-0000-000000000005',
+    name: 'ياسر عبدالرحمن',
+    phone: '770123005',
+    phoneVerified: true,
+    email: 'seeker5@dalani.ye',
+    role: 'seeker',
+    activeStatus: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2026-03-01'
+  }
+];
+
 export const MOCK_USERS: Record<string, User> = {
   visitor: {
     id: 'usr-visitor',
@@ -1162,6 +1225,7 @@ export const MOCK_USERS: Record<string, User> = {
   },
   seeker: {
     id: 'usr-seeker-1',
+    supabaseUserId: 'a0000000-0000-0000-0000-000000000000',
     name: 'أحمد العولقي',
     phone: '778990011',
     phoneVerified: true,
@@ -1171,6 +1235,11 @@ export const MOCK_USERS: Record<string, User> = {
     avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
     createdAt: '2026-01-20'
   },
+  'new-seeker-001': NEW_SEEKERS[0],
+  'new-seeker-002': NEW_SEEKERS[1],
+  'new-seeker-003': NEW_SEEKERS[2],
+  'new-seeker-004': NEW_SEEKERS[3],
+  'new-seeker-005': NEW_SEEKERS[4],
   advertiser: {
     id: 'adv-1',
     name: 'هشام عبد الرحمن القدسي',

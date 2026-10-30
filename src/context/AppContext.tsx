@@ -6,7 +6,8 @@ import {
   mapListingFromSupabase,
   mapBookingFromSupabase,
   mapRequestFromSupabase,
-  mapContractFromSupabase
+  mapContractFromSupabase,
+  mapUserFromSupabase
 } from '../services/supabaseMappers';
 import {
   Listing,
@@ -55,7 +56,8 @@ import {
   INITIAL_PROPERTY_REQUESTS,
   INITIAL_PROPERTY_BOOKINGS,
   INITIAL_PROPERTY_CONTRACTS,
-  MOCK_USERS
+  MOCK_USERS,
+  NEW_SEEKERS
 } from '../data/yemenData';
 
 interface Toast {
@@ -67,6 +69,7 @@ interface Toast {
 interface AppContextType {
   currentUser: User;
   setCurrentUserRole: (role: UserRole) => void;
+  loginUser: (credentials: { identifier: string; password?: string; role?: UserRole }) => Promise<{ success: boolean; message: string; user?: User }>;
   updateUserProfile: (updates: { name?: string; email?: string; avatarUrl?: string }) => Promise<{ success: boolean; message?: string }>;
   deactivateAccount: () => Promise<{ success: boolean; message?: string }>;
   reactivateAccount: (phone: string) => Promise<{ success: boolean; message?: string }>;
@@ -451,6 +454,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const headers = {
       'Content-Type': 'application/json',
       'x-user-role': currentUser.role,
+      'x-user-id': currentUser.id,
+      'x-user-name': encodeURIComponent(currentUser.name),
       'Authorization': `Bearer ${currentUser.id}`,
       ...(options.headers || {})
     };
@@ -1133,13 +1138,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('dalani_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
+  // Supabase Auth State Change Listener (Session restoration & UID change)
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
+        if ((event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') && session?.user) {
+          const authUid = session.user.id;
+          const { data: profile } = await client
+            .from('users')
+            .select('*')
+            .eq('supabase_user_id', authUid)
+            .maybeSingle();
+
+          if (profile) {
+            const mapped = mapUserFromSupabase(profile);
+            setCurrentUser(mapped);
+            localStorage.setItem('dalani_current_user', JSON.stringify(mapped));
+          }
+        } else if (event === 'SIGNED_OUT') {
+          const guest = MOCK_USERS['visitor'];
+          setCurrentUser(guest);
+          localStorage.removeItem('dalani_current_user');
+        }
+      });
+
+      return () => {
+        authListener?.subscription?.unsubscribe();
+      };
+    } catch (e) {
+      console.warn('[Dalani Auth Listener] Warning:', e);
+    }
+  }, []);
+
+  // Local storage backup sync
+  useEffect(() => {
+    localStorage.setItem('dalani_current_user', JSON.stringify(currentUser));
+  }, [currentUser]);
+
   useEffect(() => {
     localStorage.setItem('dalani_listings', JSON.stringify(listings));
   }, [listings]);
 
+  // Per-user isolated favorites
   useEffect(() => {
-    localStorage.setItem('dalani_favorites', JSON.stringify(favorites));
-  }, [favorites]);
+    if (currentUser.id && currentUser.role !== 'visitor') {
+      localStorage.setItem(`dalani_favorites_${currentUser.id}`, JSON.stringify(favorites));
+    } else {
+      localStorage.setItem('dalani_favorites', JSON.stringify(favorites));
+    }
+  }, [favorites, currentUser.id, currentUser.role]);
+
+  // Restore user-specific favorites on user switch
+  useEffect(() => {
+    if (currentUser.id && currentUser.role !== 'visitor') {
+      const saved = localStorage.getItem(`dalani_favorites_${currentUser.id}`);
+      if (saved) {
+        try { setFavorites(JSON.parse(saved)); } catch { setFavorites([]); }
+      } else {
+        setFavorites([]);
+      }
+    }
+  }, [currentUser.id, currentUser.role]);
 
   const setGoogleMapsApiKey = (key: string) => {
     setGoogleMapsApiKeyState(key);
@@ -1147,8 +1209,120 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('تم تحديث مفتاح Google Maps API بنجاح', 'success');
   };
 
+  /**
+   * تسجيل الدخول الموحد والمستقل للمستخدم
+   * المسار: Supabase Auth UID -> public.users.supabase_user_id -> بيانات المستخدم الفعلية
+   */
+  const loginUser = async (credentials: {
+    identifier: string;
+    password?: string;
+    role?: UserRole;
+  }): Promise<{ success: boolean; message: string; user?: User }> => {
+    const cleanId = credentials.identifier.trim();
+    if (!cleanId) {
+      showToast('يرجى إدخال اسم المستخدم أو البريد أو الهاتف', 'warning');
+      return { success: false, message: 'بيانات الدخول مطلوبة' };
+    }
+
+    try {
+      // 1. محاولة المصادقة المباشرة عبر Supabase Auth وقراءة public.users بـ supabase_user_id = auth.uid()
+      if (SupabaseAdapter.isConfigured()) {
+        const supabaseRes = await SupabaseAdapter.signInWithSupabase(cleanId, credentials.password);
+        if (supabaseRes.success && supabaseRes.user) {
+          const user = supabaseRes.user;
+          setCurrentUser(user);
+          localStorage.setItem('dalani_current_user', JSON.stringify(user));
+
+          // استعادة مفضلة المستخدم الخاصة به فقط
+          const userFavKey = `dalani_favorites_${user.id}`;
+          const savedFavs = localStorage.getItem(userFavKey);
+          setFavorites(savedFavs ? JSON.parse(savedFavs) : []);
+
+          logAction('تسجيل الدخول للمنصة', 'user', user.id, 'success', `تم تسجيل الدخول بنجاح عبر Supabase للمستخدم: ${user.name}`);
+          showToast(`تم تسجيل الدخول بنجاح! مرحباً بك يا ${user.name}`, 'success');
+          await fetchRequestsAndBookings();
+          return { success: true, message: 'تم تسجيل الدخول بنجاح', user };
+        }
+      }
+
+      // 2. المصادقة عبر API /api/auth/login للبحث بالبريد أو المعرف أو رقم الهاتف بدقة
+      const res = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          identifier: cleanId,
+          email: cleanId.includes('@') ? cleanId : undefined,
+          phone: !cleanId.includes('@') ? cleanId : undefined,
+          password: credentials.password,
+          role: credentials.role
+        })
+      });
+
+      if (res && res.ok) {
+        const data = await res.json();
+        const user = data.user as User;
+        if (user) {
+          setCurrentUser(user);
+          localStorage.setItem('dalani_current_user', JSON.stringify(user));
+
+          const userFavKey = `dalani_favorites_${user.id}`;
+          const savedFavs = localStorage.getItem(userFavKey);
+          setFavorites(savedFavs ? JSON.parse(savedFavs) : []);
+
+          logAction('تسجيل الدخول للمنصة', 'user', user.id, 'success', `تسجيل دخول ناجح للمستخدم: ${user.name} (${user.email || user.phone})`);
+          showToast(`تم تسجيل الدخول بنجاح! مرحباً بك يا ${user.name}`, 'success');
+          await fetchRequestsAndBookings();
+          return { success: true, message: data.message || 'تم تسجيل الدخول بنجاح', user };
+        }
+      }
+
+      // 3. التحقق المباشر من مصفوفة المستخدمين المعرفين في الذاكرة (بما في ذلك الحسابات الخمسة الجديدة)
+      const allKnownUsers = [
+        ...Object.values(MOCK_USERS),
+        ...NEW_SEEKERS
+      ];
+      const cleanEmail = cleanId.toLowerCase();
+      const cleanPhone = cleanId.replace(/[\s\-\(\)\+]/g, '');
+
+      const matched = allKnownUsers.find(u => {
+        if (u.email && u.email.toLowerCase() === cleanEmail) return true;
+        if (u.id === cleanId) return true;
+        if (u.supabaseUserId && u.supabaseUserId === cleanId) return true;
+        if (u.phone && cleanPhone.length >= 7) {
+          const uP = u.phone.replace(/[\s\-\(\)\+]/g, '');
+          if (uP.includes(cleanPhone) || cleanPhone.includes(uP)) return true;
+        }
+        return false;
+      });
+
+      if (matched) {
+        setCurrentUser(matched);
+        localStorage.setItem('dalani_current_user', JSON.stringify(matched));
+        const userFavKey = `dalani_favorites_${matched.id}`;
+        const savedFavs = localStorage.getItem(userFavKey);
+        setFavorites(savedFavs ? JSON.parse(savedFavs) : []);
+
+        logAction('تسجيل الدخول للمنصة', 'user', matched.id, 'success', `تسجيل دخول ناجح للمستخدم: ${matched.name}`);
+        showToast(`تم تسجيل الدخول بنجاح! مرحباً بك يا ${matched.name}`, 'success');
+        await fetchRequestsAndBookings();
+        return { success: true, message: 'تم تسجيل الدخول بنجاح', user: matched };
+      }
+
+      showToast('لم يتم العثور على حساب مطابق لبيانات الدخول', 'error');
+      return { success: false, message: 'بيانات الدخول غير صحيحة' };
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر إتمام تسجيل الدخول', 'error');
+      return { success: false, message: err?.message || 'خطأ أثناء تسجيل الدخول' };
+    }
+  };
+
   // Switch role simulator
   const setCurrentUserRole = async (role: UserRole) => {
+    // If current user is already an authenticated specific seeker or user with this role, keep their account!
+    if (currentUser.role === role && currentUser.role !== 'visitor') {
+      showToast(`أنت مسجل حالياً بدور: ${currentUser.name}`, 'info');
+      return;
+    }
+
     const user = MOCK_USERS[role] || {
       id: `usr-${role}-${Date.now()}`,
       name: `مستخدم تجريبي (${role})`,
@@ -1176,8 +1350,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`تم التبديل إلى دور: ${user.name}`, 'info');
   };
 
-  const logoutUser = () => {
-    const visitorUser: User = {
+  const logoutUser = async () => {
+    try {
+      const client = getSupabaseClient();
+      if (client) {
+        await client.auth.signOut().catch(() => {});
+      }
+    } catch {}
+
+    const visitorUser: User = MOCK_USERS['visitor'] || {
       id: 'usr-visitor-guest',
       name: 'زائر المنصة',
       phone: '',
@@ -1187,8 +1368,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: '2026-01-01'
     };
     setCurrentUser(visitorUser);
-    localStorage.setItem('dalani_current_user', JSON.stringify(visitorUser));
-    showToast('تم تسجيل الخروج بنجاح', 'info');
+    localStorage.removeItem('dalani_current_user');
+    setFavorites([]);
+    showToast('تم تسجيل الخروج بنجاح ومسح بيانات الجلسة', 'info');
   };
 
   const updateUserProfile = async (updates: { name?: string; email?: string; avatarUrl?: string }): Promise<{ success: boolean; message?: string }> => {
@@ -2551,6 +2733,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         currentUser,
         setCurrentUserRole,
+        loginUser,
         updateUserProfile,
         deactivateAccount,
         reactivateAccount,

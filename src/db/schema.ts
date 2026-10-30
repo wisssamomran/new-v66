@@ -12,6 +12,7 @@ import {
 // 1. Users Table
 export const usersTable = pgTable('users', {
   id: varchar('id', { length: 128 }).primaryKey(),
+  supabaseUserId: varchar('supabase_user_id', { length: 128 }),
   name: varchar('name', { length: 255 }).notNull(),
   role: varchar('role', { length: 64 }).notNull(),
   email: varchar('email', { length: 255 }),

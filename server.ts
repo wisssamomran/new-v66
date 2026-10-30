@@ -112,30 +112,54 @@ app.post('/api/auth/switch-role', (req: Request, res: Response) => {
   });
 });
 
-// Simulate User Login / Phone Verification
+// User Login / Authentication
 app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { phone, role = 'seeker', name } = req.body;
-
-  if (phone) {
-    const phoneCheck = validateYemeniPhone(phone);
-    if (!phoneCheck.isValid) {
-      return res.status(422).json({ error: phoneCheck.error });
-    }
-  }
+  const { phone, email, identifier, role = 'seeker', name, supabaseUserId } = req.body;
+  const loginTarget = (identifier || email || phone || '').trim();
+  const cleanEmail = loginTarget.toLowerCase();
+  const cleanPhone = loginTarget.replace(/[\s\-\(\)\+]/g, '');
 
   const allUsers = db.getUsers();
-  let user = allUsers.find(u => u.role === role);
+  let user: User | undefined;
 
-  if (!user) {
+  // 1. If supabaseUserId is provided (from Supabase Auth), find by supabase_user_id
+  if (supabaseUserId) {
+    user = allUsers.find(u => u.supabaseUserId === supabaseUserId);
+  }
+
+  // 2. If identifier / email / phone provided, find by email or ID or phone
+  if (!user && loginTarget) {
+    user = allUsers.find(u => {
+      if (u.email && u.email.toLowerCase() === cleanEmail) return true;
+      if (u.id === loginTarget) return true;
+      if (u.supabaseUserId && u.supabaseUserId === loginTarget) return true;
+      if (u.phone && cleanPhone.length >= 7) {
+        const uPhone = u.phone.replace(/[\s\-\(\)\+]/g, '');
+        if (uPhone.includes(cleanPhone) || cleanPhone.includes(uPhone)) return true;
+      }
+      return false;
+    });
+  }
+
+  // 3. If new user registration
+  if (!user && loginTarget) {
+    const newId = `usr-${Date.now()}`;
     user = {
-      id: `usr-${Date.now()}`,
-      name: name || 'مستخدم مسجل',
+      id: newId,
+      supabaseUserId: supabaseUserId || undefined,
+      name: name || (loginTarget.includes('@') ? loginTarget.split('@')[0] : 'مستخدم مسجل'),
       phone: phone || '+967 770 000 000',
       phoneVerified: true,
-      role: role as UserRole,
+      email: email || (loginTarget.includes('@') ? loginTarget : undefined),
+      role: (role as UserRole) || 'seeker',
       activeStatus: true,
       createdAt: new Date().toISOString().split('T')[0]
     };
+    db.updateUser(user.id, user);
+  }
+
+  if (!user) {
+    return res.status(400).json({ error: 'بيانات الدخول غير صحيحة أو الحساب غير موجود' });
   }
 
   recordAuditLog(
@@ -144,7 +168,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     'user',
     user.id,
     'success',
-    `تسجيل دخول ناجح برقم هاتف موثق للمستخدم ${user.name}`
+    `تسجيل دخول ناجح للمستخدم [${user.name}] (${user.email || user.phone})`
   );
 
   return res.json({

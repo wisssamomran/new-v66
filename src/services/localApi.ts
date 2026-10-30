@@ -66,20 +66,54 @@ export async function handleLocalApiCall(
   }
 
   if (path === '/api/auth/login') {
-    const { phone, role = 'seeker', name } = bodyData;
+    const { phone, email, identifier, role, supabaseUserId, name } = bodyData;
+    const loginTarget = (identifier || email || phone || '').trim();
+    const cleanEmail = loginTarget.toLowerCase();
+    const cleanPhone = loginTarget.replace(/[\s\-\(\)\+]/g, '');
+
     const allUsers = embeddedStore.getUsers();
-    let user = allUsers.find(u => u.role === role);
-    if (!user) {
+    let user: User | undefined;
+
+    // 1. By Supabase Auth UID
+    if (supabaseUserId) {
+      user = allUsers.find(u => u.supabaseUserId === supabaseUserId);
+    }
+
+    // 2. By Identifier / Email / Phone / ID
+    if (!user && loginTarget) {
+      user = allUsers.find(u => {
+        if (u.email && u.email.toLowerCase() === cleanEmail) return true;
+        if (u.id === loginTarget) return true;
+        if (u.supabaseUserId && u.supabaseUserId === loginTarget) return true;
+        if (u.phone && cleanPhone.length >= 7) {
+          const uPhone = u.phone.replace(/[\s\-\(\)\+]/g, '');
+          if (uPhone.includes(cleanPhone) || cleanPhone.includes(uPhone)) return true;
+        }
+        return false;
+      });
+    }
+
+    // 3. If new user registration
+    if (!user && loginTarget) {
+      const newId = `usr-${Date.now()}`;
       user = {
-        id: `usr-${Date.now()}`,
-        name: name || 'مستخدم مسجل',
+        id: newId,
+        supabaseUserId: supabaseUserId || undefined,
+        name: name || (loginTarget.includes('@') ? loginTarget.split('@')[0] : 'مستخدم مسجل'),
         phone: phone || '+967 770 000 000',
         phoneVerified: true,
-        role: role as UserRole,
+        email: email || (loginTarget.includes('@') ? loginTarget : undefined),
+        role: (role as UserRole) || 'seeker',
         activeStatus: true,
         createdAt: new Date().toISOString().split('T')[0]
       };
+      embeddedStore.updateUser(user.id, user);
     }
+
+    if (!user) {
+      return makeResponse(400, { error: 'بيانات الدخول غير صحيحة أو الحساب غير موجود' });
+    }
+
     return makeResponse(200, { message: 'تم تسجيل الدخول بنجاح', user });
   }
 

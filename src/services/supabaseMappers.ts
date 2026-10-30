@@ -26,6 +26,7 @@ import {
 export function mapUserToSupabase(user: User): Record<string, any> {
   return {
     id: user.id,
+    supabase_user_id: user.supabaseUserId || null,
     name: user.name,
     role: user.role,
     email: user.email || null,
@@ -43,6 +44,7 @@ export function mapUserToSupabase(user: User): Record<string, any> {
 export function mapUserFromSupabase(row: any): User {
   return {
     id: row.id,
+    supabaseUserId: row.supabase_user_id || undefined,
     name: row.name || 'مستخدم غير معروف',
     role: row.role || 'seeker',
     email: row.email || undefined,

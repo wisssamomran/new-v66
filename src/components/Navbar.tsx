@@ -33,7 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onOpenRoleSwitcher
 }) => {
-  const { currentUser, setCurrentUserRole, favorites, requests, bookings, showToast } = useApp();
+  const { currentUser, logoutUser, setCurrentUserRole, favorites, requests, bookings, showToast } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isVisitor = currentUser.role === 'visitor';
@@ -59,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const handleLogout = () => {
-    setCurrentUserRole('visitor');
+    logoutUser();
     showToast('تم تسجيل الخروج بنجاح. أنت تتصفح الآن كزائر عام', 'info');
     onNavigate('home');
   };
@@ -235,6 +235,37 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Right Action Elements */}
           <div className="flex items-center gap-2 md:gap-3">
 
+
+            {/* Logged in User Indicator & Quick Actions */}
+            {!isVisitor && (
+              <div className="hidden sm:flex items-center gap-2 bg-slate-50 border border-slate-200/80 rounded-2xl p-1 pr-3">
+                <button
+                  onClick={() => handleNavClick('account')}
+                  className="flex items-center gap-2 text-right hover:opacity-80 transition-opacity"
+                  title="عرض الملف الشخصي"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#16324F] to-[#12A889] text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    {currentUser.name ? currentUser.name.slice(0, 1) : 'U'}
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-800 leading-tight max-w-[120px] truncate">
+                      {currentUser.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono leading-tight">
+                      {currentUser.role === 'seeker' ? 'باحث عن عقار' : currentUser.role}
+                    </div>
+                  </div>
+                </button>
+                <div className="h-5 w-px bg-slate-200 mx-0.5" />
+                <button
+                  onClick={handleLogout}
+                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                  title="تسجيل الخروج"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {/* Visitor Auth Buttons (Profile button removed from top bar to keep it clean) */}
             {isVisitor && (

@@ -26,7 +26,8 @@ import {
   mapContractFromSupabase,
   mapAuditLogToSupabase,
   mapAuditLogFromSupabase,
-  mapUserToSupabase
+  mapUserToSupabase,
+  mapUserFromSupabase
 } from './supabaseMappers';
 
 export class SupabaseAdapter {
@@ -58,6 +59,106 @@ export class SupabaseAdapter {
     } catch (e) {
       console.warn('[SupabaseAdapter] ensureUserExists exception:', e);
       return false;
+    }
+  }
+
+  // ==========================================
+  // 0. إدارة المصادقة والمستخدمين (Auth & Users)
+  // ==========================================
+
+  /**
+   * تسجيل الدخول عبر Supabase Auth والربط بـ public.users
+   * المسار: Supabase Auth UID -> public.users.supabase_user_id -> بيانات المستخدم الفعلية
+   */
+  static async signInWithSupabase(
+    identifier: string,
+    password?: string
+  ): Promise<{ success: boolean; user?: User; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'عميل Supabase غير متصل' };
+
+    try {
+      const cleanId = identifier.trim();
+      const isEmail = cleanId.includes('@');
+
+      // 1. إذا كان بريداً ولديه كلمة مرور، جرب المصادقة عبر Supabase Auth
+      if (isEmail && password) {
+        const { data: authData, error: authError } = await client.auth.signInWithPassword({
+          email: cleanId.toLowerCase(),
+          password: password
+        });
+
+        if (!authError && authData?.user) {
+          const authUid = authData.user.id;
+
+          // أ) استعلام مباشر عبر: supabase_user_id = auth.uid()
+          const { data: profileByUid } = await client
+            .from('users')
+            .select('*')
+            .eq('supabase_user_id', authUid)
+            .maybeSingle();
+
+          if (profileByUid) {
+            return { success: true, user: mapUserFromSupabase(profileByUid) };
+          }
+
+          // ب) إذا لم يكن supabase_user_id مرتبطاً بعد، اربطه فوراً بالبريد
+          const { data: profileByEmail } = await client
+            .from('users')
+            .select('*')
+            .ilike('email', cleanId)
+            .maybeSingle();
+
+          if (profileByEmail) {
+            await client
+              .from('users')
+              .update({ supabase_user_id: authUid, updated_at: new Date().toISOString() })
+              .eq('id', profileByEmail.id);
+
+            return {
+              success: true,
+              user: mapUserFromSupabase({ ...profileByEmail, supabase_user_id: authUid })
+            };
+          }
+        }
+      }
+
+      // 2. استعلام public.users بواسطة البريد أو المعرف أو رقم الهاتف
+      const { data: directProfile } = await client
+        .from('users')
+        .select('*')
+        .or(`email.ilike.${cleanId},id.eq.${cleanId},phone.eq.${cleanId}`)
+        .maybeSingle();
+
+      if (directProfile) {
+        return { success: true, user: mapUserFromSupabase(directProfile) };
+      }
+
+      return { success: false, error: 'لم يتم العثور على حساب مطابق' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ أثناء المصادقة' };
+    }
+  }
+
+  /**
+   * جلب ملف المستخدم عبر Supabase Auth UID: supabase_user_id = auth.uid()
+   */
+  static async fetchUserProfileByAuthUid(authUid: string): Promise<{ success: boolean; user?: User; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير متصل' };
+
+    try {
+      const { data, error } = await client
+        .from('users')
+        .select('*')
+        .eq('supabase_user_id', authUid)
+        .maybeSingle();
+
+      if (error) return { success: false, error: error.message };
+      if (!data) return { success: false, error: 'المستخدم غير موجود' };
+      return { success: true, user: mapUserFromSupabase(data) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   }
 

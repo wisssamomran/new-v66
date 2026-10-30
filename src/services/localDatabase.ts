@@ -183,6 +183,19 @@ class EmbeddedLocalStore {
         if (parsed && Array.isArray(parsed.listings)) {
           parsed.listings = parsed.listings.map(normalizeListing);
           parsed.bookings = (parsed.bookings || []).map(normalizeBooking);
+          const defaultUsers = Object.values(MOCK_USERS);
+          if (!Array.isArray(parsed.users) || parsed.users.length === 0) {
+            parsed.users = defaultUsers;
+          } else {
+            for (const defU of defaultUsers) {
+              const idx = parsed.users.findIndex((u: any) => u.id === defU.id || (u.email && defU.email && u.email.toLowerCase() === defU.email.toLowerCase()));
+              if (idx === -1) {
+                parsed.users.push(defU);
+              } else {
+                parsed.users[idx] = { ...defU, ...parsed.users[idx], supabaseUserId: defU.supabaseUserId || parsed.users[idx].supabaseUserId };
+              }
+            }
+          }
           return parsed;
         }
       }
@@ -349,6 +362,30 @@ class EmbeddedLocalStore {
 
   public getUsers(): User[] {
     return [...this.data.users];
+  }
+
+  public getUserById(id: string): User | undefined {
+    return this.data.users.find(u => u.id === id);
+  }
+
+  public getUserBySupabaseId(supabaseUserId: string): User | undefined {
+    return this.data.users.find(u => u.supabaseUserId === supabaseUserId);
+  }
+
+  public getUserByEmailOrPhone(identifier: string): User | undefined {
+    const clean = identifier.trim().toLowerCase();
+    const cleanPhone = identifier.replace(/[\s\-\(\)\+]/g, '');
+    return this.data.users.find(u => {
+      if (u.email && u.email.toLowerCase() === clean) return true;
+      if (u.id === identifier) return true;
+      if (u.supabaseUserId === identifier) return true;
+      if (u.phone) {
+        const uPhoneClean = u.phone.replace(/[\s\-\(\)\+]/g, '');
+        if (uPhoneClean === cleanPhone) return true;
+        if (cleanPhone.length >= 7 && uPhoneClean.endsWith(cleanPhone)) return true;
+      }
+      return false;
+    });
   }
 
   public updateUser(id: string, updates: Partial<User>): User | undefined {

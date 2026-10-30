@@ -169,6 +169,7 @@ export interface Listing {
 
 export interface User {
   id: string;
+  supabaseUserId?: string; // UUID from Supabase auth.users(id)
   name: string;
   phone: string;
   phoneVerified: boolean;

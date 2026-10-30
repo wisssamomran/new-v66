@@ -38,11 +38,18 @@ VALUES
     -- 11. باحث مسجل 1
     ('usr-seeker', 'أصيل محمد الحكيمي', 'seeker', 'aseel@example.com', '778990011', TRUE, 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-01-20 14:00:00+03'),
     -- 12. باحث مسجل 2
-    ('usr-seeker-2', 'معاذ سالم باوزير', 'seeker', 'muath@example.com', '772113355', TRUE, 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-02-01 15:30:00+03')
+    ('usr-seeker-2', 'معاذ سالم باوزير', 'seeker', 'muath@example.com', '772113355', TRUE, 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-02-01 15:30:00+03'),
+    -- الحسابات الخمسة الجديدة للباحثين
+    ('new-seeker-001', 'محمد أحمد العريقي', 'seeker', 'seeker1@dalani.ye', '771110001', TRUE, 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-03-01 10:00:00+03'),
+    ('new-seeker-002', 'عبدالله محمد اليافعي', 'seeker', 'seeker2@dalani.ye', '771110002', TRUE, 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-03-01 10:00:00+03'),
+    ('new-seeker-003', 'خالد علي الحضرمي', 'seeker', 'seeker3@dalani.ye', '771110003', TRUE, 'https://images.unsplash.com/photo-1527980965255-d3b416303d12?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-03-01 10:00:00+03'),
+    ('new-seeker-004', 'أحمد صالح الشامي', 'seeker', 'seeker4@dalani.ye', '771110004', TRUE, 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-03-01 10:00:00+03'),
+    ('new-seeker-005', 'ياسر عبدالرحمن', 'seeker', 'seeker5@dalani.ye', '771110005', TRUE, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80', NULL, NULL, FALSE, TRUE, '2026-03-01 10:00:00+03')
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     role = EXCLUDED.role,
     phone = EXCLUDED.phone,
+    email = EXCLUDED.email,
     active_status = EXCLUDED.active_status;
 
 -- --------------------------------------------------------------------
