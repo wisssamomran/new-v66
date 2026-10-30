@@ -1204,17 +1204,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [favorites, currentUser.id, currentUser.role]);
 
-  // Restore user-specific favorites on user switch
+  // Restore user-specific favorites on user switch or login
   useEffect(() => {
+    let active = true;
     if (currentUser.id && currentUser.role !== 'visitor') {
-      const saved = localStorage.getItem(`dalani_favorites_${currentUser.id}`);
-      if (saved) {
-        try { setFavorites(JSON.parse(saved)); } catch { setFavorites([]); }
+      if (SupabaseAdapter.isConfigured()) {
+        SupabaseAdapter.fetchFavorites(currentUser.id).then(res => {
+          if (active && res.success && Array.isArray(res.data)) {
+            setFavorites(res.data);
+            return;
+          }
+          // Fallback to localStorage if offline/unconfigured
+          const saved = localStorage.getItem(`dalani_favorites_${currentUser.id}`);
+          if (saved) {
+            try { setFavorites(JSON.parse(saved)); } catch { setFavorites([]); }
+          } else {
+            setFavorites([]);
+          }
+        });
       } else {
-        setFavorites([]);
+        const saved = localStorage.getItem(`dalani_favorites_${currentUser.id}`);
+        if (saved) {
+          try { setFavorites(JSON.parse(saved)); } catch { setFavorites([]); }
+        } else {
+          setFavorites([]);
+        }
       }
     }
+    return () => { active = false; };
   }, [currentUser.id, currentUser.role]);
+
 
   const setGoogleMapsApiKey = (key: string) => {
     setGoogleMapsApiKeyState(key);
@@ -1472,7 +1491,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       details
     };
     setAuditLogs(prev => [newEntry, ...prev]);
+
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.logAuditActionInDb(newEntry).catch(e => console.warn('[Supabase Sync logAction]:', e));
+    }
   };
+
 
   // --- Listings Operations ---
   const createListing = async (
@@ -1634,20 +1658,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('يجب تسجيل الدخول أو إنشاء حساب لحفظ العقارات في مفضلتك', 'warning');
       return;
     }
+
     setFavorites(prev => {
       const exists = prev.includes(listingId);
       const updated = exists ? prev.filter(id => id !== listingId) : [...prev, listingId];
       showToast(exists ? 'تمت إزالة العقار من المفضلة' : 'تمت إضافة العقار إلى المفضلة', 'info');
       return updated;
     });
+
+    if (SupabaseAdapter.isConfigured() && currentUser.id) {
+      SupabaseAdapter.toggleFavoriteInDb(currentUser.id, listingId).catch(e => console.warn('[Supabase Sync Favorite]:', e));
+    }
   };
 
   const isFavorite = (listingId: string) => favorites.includes(listingId);
 
   // --- Organization Actions ---
   const addOrgMember = (orgId: string, name: string, phone: string, roleInOrg: 'manager' | 'agent' | 'assistant') => {
+    const memberId = 'mem-' + Date.now();
     const newMember = {
-      id: 'mem-' + Date.now(),
+      id: memberId,
       userId: 'usr-agent-' + Date.now(),
       name,
       phone,
@@ -1666,22 +1696,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.addOrgMemberInDb({
+        id: memberId,
+        organization_id: orgId,
+        member_name: name,
+        member_phone: phone,
+        role_in_org: roleInOrg,
+        is_active: true
+      }).catch(e => console.warn('[Supabase Sync OrgMember]:', e));
+    }
+
     logAction('إضافة عضو منشأة', 'organization', orgId, 'success', `تمت إضافة العضو ${name} بدور ${roleInOrg}`);
     showToast(`تمت إضافة العضو ${name} بنجاح للمنشأة`, 'success');
   };
 
   const toggleOrgMemberStatus = (orgId: string, memberId: string) => {
+    let newStatus = false;
     setOrganizations(prev =>
       prev.map(org => {
         if (org.id === orgId) {
           return {
             ...org,
-            members: org.members.map(m => (m.id === memberId ? { ...m, isActive: !m.isActive } : m))
+            members: org.members.map(m => {
+              if (m.id === memberId) {
+                newStatus = !m.isActive;
+                return { ...m, isActive: newStatus };
+              }
+              return m;
+            })
           };
         }
         return org;
       })
     );
+
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.toggleOrgMemberStatusInDb(memberId, newStatus).catch(e => console.warn('[Supabase Sync ToggleMember]:', e));
+    }
+
     showToast('تم تعديل حالة تفعيل العضو', 'info');
   };
 
@@ -1689,9 +1742,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setListings(prev =>
       prev.map(l => (l.id === listingId ? { ...l, assignedAgentId: agentId, assignedAgentName: agentName } : l))
     );
+
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.assignListingAgentInDb(listingId, agentId, agentName).catch(e => console.warn('[Supabase Sync AssignAgent]:', e));
+    }
+
     logAction('إسناد إعلان إلى موظف', 'listing', listingId, 'success', `تم إسناد الإعلان إلى: ${agentName}`);
     showToast(`تم إسناد الإعلان إلى ${agentName}`, 'success');
   };
+
 
   // --- Verification Actions ---
   const submitVerificationRequest = async (req: Omit<VerificationRequest, 'id' | 'createdAt' | 'status'>) => {

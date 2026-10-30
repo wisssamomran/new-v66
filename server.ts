@@ -52,6 +52,9 @@ const app = express();
 // Port 3000 & iFrame: Dev server must run on port 3000. Do not inherit external container PORT (e.g. 8080 used by Nginx).
 const PORT = 3000;
 
+// Express Trust Proxy setup for Cloud environment / Reverse Proxy
+app.set('trust proxy', 1);
+
 // CORS & Headers Middleware for Capacitor Mobile App and External Clients
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -63,12 +66,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// IP Block Guard Middleware
+const ipBlockGuard = (req: Request, res: Response, next: any) => {
+  const rawIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+  const blockedList = db.getBlockedIps ? db.getBlockedIps() : [];
+  const isBlocked = blockedList.some(b => (b.ip === rawIp || (b as any).ipAddress === rawIp));
+  if (isBlocked) {
+    return res.status(403).json({ error: 'تم حظر هذا العنوان (IP) من الوصول لخدمات المنصة لمخالفة معايير الأمان.' });
+  }
+  next();
+};
+
+
 // Body Parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Global Authentication & Role Resolver Middleware
+// Global IP Guard & Auth Middleware
+app.use(ipBlockGuard);
 app.use(authMiddleware);
+
 
 // ==========================================
 // 1. AUTHENTICATION & ROLE SWITCHER APIS
@@ -83,34 +100,131 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
   });
 });
 
-// Switch Role Simulator Endpoint
-app.post('/api/auth/switch-role', (req: Request, res: Response) => {
-  const { role } = req.body;
-  if (!role) {
-    return res.status(400).json({ error: 'الدور مطلوب' });
+// Switch Role Simulator Endpoint (Strictly requires explicit userId or identifier to prevent impersonation)
+app.post('/api/auth/switch-role', requireRoles('system_admin'), (req: Request, res: Response) => {
+  const { role, userId, targetIdentifier } = req.body;
+  const targetId = (userId || targetIdentifier || '').trim();
+
+  if (!targetId) {
+    return res.status(400).json({ error: 'معرّف الحساب الفعلي (userId) مطلوب لتبديل الجلسة لمنع انتحال الشخصيات' });
   }
 
   const allUsers = db.getUsers();
-  const targetUser = allUsers.find(u => u.role === role);
+  const cleanId = targetId.toLowerCase();
+
+  const targetUser = allUsers.find(u =>
+    u.id === targetId ||
+    u.supabaseUserId === targetId ||
+    (u.email && u.email.toLowerCase() === cleanId) ||
+    (u.phone && u.phone.includes(targetId))
+  );
 
   if (!targetUser) {
-    return res.status(404).json({ error: 'الدور المحدد غير موجود في سجل المستخدمين' });
+    return res.status(404).json({ error: 'لم يتم العثور على الحساب المحدد في سجلات النظام' });
   }
 
   recordAuditLog(
     targetUser,
-    'تبديل دور الجلسة عبر المحاكي',
+    'تبديل دور الجلسة عبر المحاكي الإداري',
     'user',
     targetUser.id,
     'success',
-    `تم تبديل دور الجلسة النشطة إلى: [${role}] - ${targetUser.name}`
+    `تم اختيار الحساب المحدد بنجاح: [${targetUser.name}] - (${targetUser.email || targetUser.phone})`
   );
 
   return res.json({
-    message: 'تم تبديل الدور بنجاح',
+    message: 'تم اختيار الحساب المحدد بنجاح',
     user: targetUser
   });
 });
+
+// Admin Safe Provisioner Endpoint for Supabase Auth Seekers
+app.post('/api/admin/supabase/provision-seekers', requireRoles('system_admin'), async (req: Request, res: Response) => {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://xoqfdzemtcpxqracygnb.supabase.co';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!serviceRoleKey) {
+    return res.status(500).json({
+      error: 'مفتاح SUPABASE_SERVICE_ROLE_KEY غير موفر في بيئة الخادم. يرجى إضافته في متغيرات بيئة التشغيل للإنشاء الآمن.'
+    });
+  }
+
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    const seekersToProvision = [
+      { id: 'new-seeker-001', name: 'محمد أحمد العريقي', email: 'seeker1@dalani.ye', phone: '770123001' },
+      { id: 'new-seeker-002', name: 'عبدالله محمد اليافعي', email: 'seeker2@dalani.ye', phone: '770123002' },
+      { id: 'new-seeker-003', name: 'خالد علي الحضرمي', email: 'seeker3@dalani.ye', phone: '770123003' },
+      { id: 'new-seeker-004', name: 'أحمد صالح الشامي', email: 'seeker4@dalani.ye', phone: '770123004' },
+      { id: 'new-seeker-005', name: 'ياسر عبدالرحمن', email: 'seeker5@dalani.ye', phone: '770123005' }
+    ];
+
+    const results = [];
+
+    for (const seeker of seekersToProvision) {
+      // 1. Check if user already exists in auth.users
+      const { data: existingList } = await supabaseAdmin.auth.admin.listUsers();
+      let existingAuthUser = existingList?.users?.find(u => u.email?.toLowerCase() === seeker.email.toLowerCase());
+
+      let authUid = existingAuthUser?.id;
+
+      if (!authUid) {
+        const defaultPassword = req.body.defaultPassword || 'Dalani2026!Seeker';
+        const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+          email: seeker.email,
+          password: defaultPassword,
+          email_confirm: true,
+          user_metadata: { name: seeker.name, role: 'seeker', phone: seeker.phone }
+        });
+
+        if (createErr || !created.user) {
+          results.push({ email: seeker.email, status: 'error', error: createErr?.message || 'تعذر إنشاء حساب Auth' });
+          continue;
+        }
+        authUid = created.user.id;
+      }
+
+      // 2. Link UUID strictly to public.users matching seeker.email / seeker.id
+      const { error: updateErr } = await supabaseAdmin
+        .from('users')
+        .update({
+          supabase_user_id: authUid,
+          email: seeker.email,
+          phone: seeker.phone,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', seeker.id);
+
+      if (updateErr) {
+        results.push({ email: seeker.email, authUid, status: 'db_link_error', error: updateErr.message });
+      } else {
+        db.updateUser(seeker.id, { supabaseUserId: authUid, email: seeker.email, phone: seeker.phone });
+        results.push({ email: seeker.email, name: seeker.name, authUid, status: 'linked_successfully' });
+      }
+    }
+
+    recordAuditLog(
+      req.currentUser,
+      'توليد وتأكيد حسابات الباحثين في Supabase Auth',
+      'security',
+      'batch-provisioning',
+      'success',
+      `تمت معالجة الحسابات بنجاح. النتائج: ${JSON.stringify(results)}`
+    );
+
+    return res.json({
+      message: 'تمت معالجة وتأكيد حسابات الباحثين في Supabase Auth بنجاح',
+      results
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'حدث خطأ أثناء الاتصال بـ Supabase Admin API' });
+  }
+});
+
 
 // User Login / Authentication
 app.post('/api/auth/login', (req: Request, res: Response) => {

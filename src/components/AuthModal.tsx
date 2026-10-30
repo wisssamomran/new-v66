@@ -105,10 +105,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     onClose();
   };
 
-  const handleQuickRoleLogin = (role: UserRole) => {
-    setCurrentUserRole(role);
-    showToast(`تم تسجيل الدخول المباشر بدور: ${role}`, 'success');
-    onClose();
+  const handleQuickRoleLogin = async (role: UserRole) => {
+    const roleUserMap: Record<string, string> = {
+      seeker: 'usr-seeker-1',
+      advertiser: 'adv-1',
+      org_manager: 'user-org-manager',
+      org_agent: 'user-org-agent',
+      moderator: 'usr-mod-1',
+      verifier: 'usr-ver-1',
+      system_admin: 'usr-sys-admin'
+    };
+
+    const targetUserId = roleUserMap[role] || 'usr-seeker-1';
+    setIsLoading(true);
+    try {
+      const ok = await loginUser({ identifier: targetUserId });
+      if (ok) {
+        showToast(`تم الاختيار المباشر للحساب التجريبي المحدد بدور: ${role}`, 'success');
+        onClose();
+      } else {
+        showToast('تعذر تحميل الحساب المخصص لهذا الدور', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

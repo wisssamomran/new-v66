@@ -81,49 +81,56 @@ export class SupabaseAdapter {
       const cleanId = identifier.trim();
       const isEmail = cleanId.includes('@');
 
-      // 1. إذا كان بريداً ولديه كلمة مرور، جرب المصادقة عبر Supabase Auth
+      // 1. إذا كان بريداً ولديه كلمة مرور، جرب المصادقة عبر Supabase Auth حصراً
       if (isEmail && password) {
         const { data: authData, error: authError } = await client.auth.signInWithPassword({
           email: cleanId.toLowerCase(),
           password: password
         });
 
-        if (!authError && authData?.user) {
-          const authUid = authData.user.id;
-
-          // أ) استعلام مباشر عبر: supabase_user_id = auth.uid()
-          const { data: profileByUid } = await client
-            .from('users')
-            .select('*')
-            .eq('supabase_user_id', authUid)
-            .maybeSingle();
-
-          if (profileByUid) {
-            return { success: true, user: mapUserFromSupabase(profileByUid) };
-          }
-
-          // ب) إذا لم يكن supabase_user_id مرتبطاً بعد، اربطه فوراً بالبريد
-          const { data: profileByEmail } = await client
-            .from('users')
-            .select('*')
-            .ilike('email', cleanId)
-            .maybeSingle();
-
-          if (profileByEmail) {
-            await client
-              .from('users')
-              .update({ supabase_user_id: authUid, updated_at: new Date().toISOString() })
-              .eq('id', profileByEmail.id);
-
-            return {
-              success: true,
-              user: mapUserFromSupabase({ ...profileByEmail, supabase_user_id: authUid })
-            };
-          }
+        if (authError || !authData?.user) {
+          return {
+            success: false,
+            error: 'تعذر التحقق من الحساب: كلمة المرور غير صحيحة أو الحساب غير معتمد في Supabase Auth'
+          };
         }
+
+        const authUid = authData.user.id;
+
+        // أ) استعلام مباشر عبر: supabase_user_id = auth.uid()
+        const { data: profileByUid } = await client
+          .from('users')
+          .select('*')
+          .eq('supabase_user_id', authUid)
+          .maybeSingle();
+
+        if (profileByUid) {
+          return { success: true, user: mapUserFromSupabase(profileByUid) };
+        }
+
+        // ب) إذا لم يكن supabase_user_id مرتبطاً بعد، اربطه فوراً بالبريد الفعلي
+        const { data: profileByEmail } = await client
+          .from('users')
+          .select('*')
+          .ilike('email', cleanId)
+          .maybeSingle();
+
+        if (profileByEmail) {
+          await client
+            .from('users')
+            .update({ supabase_user_id: authUid, updated_at: new Date().toISOString() })
+            .eq('id', profileByEmail.id);
+
+          return {
+            success: true,
+            user: mapUserFromSupabase({ ...profileByEmail, supabase_user_id: authUid })
+          };
+        }
+
+        return { success: false, error: 'تمت المصادقة لكن لم يتم العثور على ملف الشخصي المطابق في قاعدة البيانات' };
       }
 
-      // 2. استعلام public.users بواسطة البريد أو المعرف أو رقم الهاتف
+      // 2. استعلام مباشر بدون كلمة مرور للحسابات التجريبية أو الرقم
       const { data: directProfile } = await client
         .from('users')
         .select('*')
@@ -134,7 +141,7 @@ export class SupabaseAdapter {
         return { success: true, user: mapUserFromSupabase(directProfile) };
       }
 
-      return { success: false, error: 'لم يتم العثور على حساب مطابق' };
+      return { success: false, error: 'لم يتم العثور على حساب مطابق في سجلات النظام' };
     } catch (err: any) {
       return { success: false, error: err.message || 'حدث خطأ أثناء المصادقة' };
     }
@@ -654,24 +661,237 @@ export class SupabaseAdapter {
     }
   }
 
-  static async getSignedDocumentUrl(
-    bucketName: string,
-    filePath: string,
-    expiresInSeconds: number = 3600
-  ): Promise<{ success: boolean; signedUrl?: string; error?: string }> {
+  // ==========================================
+  // 9. أعضاء المنشأة العقارية وإسناد العقارات (Organization Members)
+  // ==========================================
+
+  static async fetchOrgMembers(orgId: string): Promise<{ success: boolean; data?: any[]; error?: string }> {
     const client = getSupabaseClient();
     if (!client) return { success: false, error: 'Supabase غير مهيأ' };
 
     try {
-      const { data, error } = await client.storage
-        .from(bucketName)
-        .createSignedUrl(filePath, expiresInSeconds);
+      const { data, error } = await client
+        .from('organization_members')
+        .select('*')
+        .eq('organization_id', orgId);
 
       if (error) return { success: false, error: error.message };
-      return { success: true, signedUrl: data.signedUrl };
+      return { success: true, data: data || [] };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async addOrgMemberInDb(memberData: {
+    id: string;
+    organization_id: string;
+    user_id?: string;
+    member_name: string;
+    member_phone: string;
+    role_in_org: 'manager' | 'agent' | 'assistant';
+    is_active: boolean;
+  }): Promise<{ success: boolean; data?: any; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('organization_members')
+        .insert(memberData)
+        .select('*')
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async toggleOrgMemberStatusInDb(memberId: string, isActive: boolean): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('organization_members')
+        .update({ is_active: isActive, updated_at: new Date().toISOString() })
+        .eq('id', memberId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async assignListingAgentInDb(listingId: string, agentId: string, agentName: string): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('listings')
+        .update({ assigned_agent_id: agentId, assigned_agent_name: agentName, updated_at: new Date().toISOString() })
+        .eq('id', listingId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 10. حوكمة النظام، الموظفين، وحظر الـ IP (Admin Governance & Security)
+  // ==========================================
+
+  static async fetchStaffMembersInDb(): Promise<{ success: boolean; data?: any[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('staff_members')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: data || [] };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async addStaffMemberInDb(staffData: any): Promise<{ success: boolean; data?: any; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('staff_members')
+        .insert(staffData)
+        .select('*')
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateStaffPermissionsInDb(staffId: string, permissions: string[]): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('staff_members')
+        .update({ permissions, updated_at: new Date().toISOString() })
+        .eq('id', staffId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async fetchIpBlocksInDb(): Promise<{ success: boolean; data?: any[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('ip_blocks')
+        .select('*')
+        .eq('is_active', true);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: data || [] };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async blockIpInDb(ipAddress: string, reason: string, blockedBy: string): Promise<{ success: boolean; data?: any; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = {
+        id: `ipb-${Date.now()}`,
+        ip_address: ipAddress,
+        reason: reason,
+        blocked_by: blockedBy,
+        blocked_at: new Date().toISOString(),
+        is_active: true
+      };
+
+      const { data, error } = await client
+        .from('ip_blocks')
+        .upsert(payload, { onConflict: 'ip_address' })
+        .select('*')
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async unblockIpInDb(ipAddress: string): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('ip_blocks')
+        .update({ is_active: false })
+        .eq('ip_address', ipAddress);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async logAuditActionInDb(entry: AuditLogEntry): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapAuditLogToSupabase(entry);
+      const { error } = await client.from('audit_logs').insert(payload);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async fetchAuditLogsInDb(limitCount: number = 100): Promise<{ success: boolean; data?: AuditLogEntry[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limitCount);
+
+      if (error) return { success: false, error: error.message };
+      const logs = (data || []).map(mapAuditLogFromSupabase);
+      return { success: true, data: logs };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
   }
 }
+
 
