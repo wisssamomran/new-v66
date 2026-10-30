@@ -1,7 +1,7 @@
 -- ====================================================================
 -- منصة «دلنّي» العقارية اليمنية - Dalani Real Estate Platform
--- ملف ترحيل وتكامل الجداول غير المربوطة (المفضلة، أعضاء المنشأة، حوكمة النظام، سجل التدقيق)
--- الإصدار: 3.0.0 Complete Persistence & Governance Migration
+-- ملف التحديث والتصحيح الآمن للأنظمة غير المربوطة وإصلاح مقارنات الـ UUID والـ TEXT
+-- الإصدار: 4.0.0 Strictly Cast-Safe & Multi-Tenant Hardened Migration
 -- التاريخ: 2026-10-30
 -- ====================================================================
 
@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_target ON public.audit_logs(target_type, ta
 CREATE INDEX IF NOT EXISTS idx_audit_created ON public.audit_logs(created_at DESC);
 
 -- --------------------------------------------------------------------
--- 7. تفعيل سياسات الأمان RLS للجداول الحسابية المفتوحة
+-- 7. تفعيل سياسات الأمان RLS مع إصلاح المقارنات وتفادي خطأ uuid = text
 -- --------------------------------------------------------------------
 ALTER TABLE public.user_favorites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
@@ -114,24 +114,41 @@ ALTER TABLE public.ip_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
--- 7.1 سياسات المفضلة
+-- 7.1 سياسة المفضلة (حماية ملكية المفضلة لكل مستخدم)
 DROP POLICY IF EXISTS favorites_owner_policy ON public.user_favorites;
 CREATE POLICY favorites_owner_policy ON public.user_favorites
     FOR ALL
     USING (
-        user_id = auth.uid()::text OR
+        user_id::text = auth.uid()::text OR
         EXISTS (
             SELECT 1 FROM public.users u 
-            WHERE u.id = user_favorites.user_id 
-              AND u.supabase_user_id = auth.uid()::text
+            WHERE u.id::text = user_favorites.user_id::text 
+              AND u.supabase_user_id::text = auth.uid()::text
+        )
+    )
+    WITH CHECK (
+        user_id::text = auth.uid()::text OR
+        EXISTS (
+            SELECT 1 FROM public.users u 
+            WHERE u.id::text = user_favorites.user_id::text 
+              AND u.supabase_user_id::text = auth.uid()::text
         )
     );
 
--- 7.2 سياسات أعضاء المنشأة
+-- 7.2 سياسة أعضاء المنشأة (منع القراءة العامة وتقييد الإدارة بالمنشأة نفسها فقط)
 DROP POLICY IF EXISTS org_members_read_policy ON public.organization_members;
 CREATE POLICY org_members_read_policy ON public.organization_members
     FOR SELECT
-    USING (TRUE);
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND (
+                  u.role IN ('system_admin', 'moderator') OR
+                  (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
+              )
+        )
+    );
 
 DROP POLICY IF EXISTS org_members_write_policy ON public.organization_members;
 CREATE POLICY org_members_write_policy ON public.organization_members
@@ -139,19 +156,28 @@ CREATE POLICY org_members_write_policy ON public.organization_members
     USING (
         EXISTS (
             SELECT 1 FROM public.users u
-            WHERE (u.id = auth.uid()::text OR u.supabase_user_id = auth.uid()::text)
-              AND u.role IN ('system_admin', 'organization_manager', 'moderator')
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'org_manager', 'organization_manager')
+              AND (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'org_manager', 'organization_manager')
+              AND (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
         )
     );
 
--- 7.3 سياسات التدقيق والحوكمة (Append-only لحفظ السلامة)
+-- 7.3 سياسات سجل التدقيق (منع التزوير وتقييد القراءة بالمدراء)
 DROP POLICY IF EXISTS audit_logs_read_policy ON public.audit_logs;
 CREATE POLICY audit_logs_read_policy ON public.audit_logs
     FOR SELECT
     USING (
         EXISTS (
             SELECT 1 FROM public.users u
-            WHERE (u.id = auth.uid()::text OR u.supabase_user_id = auth.uid()::text)
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
               AND u.role IN ('system_admin', 'moderator', 'support')
         )
     );
@@ -159,10 +185,87 @@ CREATE POLICY audit_logs_read_policy ON public.audit_logs
 DROP POLICY IF EXISTS audit_logs_insert_policy ON public.audit_logs;
 CREATE POLICY audit_logs_insert_policy ON public.audit_logs
     FOR INSERT
-    WITH CHECK (TRUE);
+    WITH CHECK (
+        user_id::text = auth.uid()::text OR
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE u.id::text = audit_logs.user_id::text
+              AND u.supabase_user_id::text = auth.uid()::text
+        )
+    );
+
+-- 7.4 سياسات الموظفين وإعدادات النظام وحظر IP (محصورة بمدراء النظام فقط)
+DROP POLICY IF EXISTS staff_admin_policy ON public.staff_members;
+CREATE POLICY staff_admin_policy ON public.staff_members
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    );
+
+DROP POLICY IF EXISTS ip_blocks_admin_policy ON public.ip_blocks;
+CREATE POLICY ip_blocks_admin_policy ON public.ip_blocks
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    );
+
+DROP POLICY IF EXISTS system_settings_policy ON public.system_settings;
+CREATE POLICY system_settings_policy ON public.system_settings
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    );
 
 -- --------------------------------------------------------------------
--- 8. تفعيل النقل والتحديث الفوري (Supabase Realtime)
+-- 8. حظر التعديل والحذف على سجل التدقيق الإداري (Trigger)
+-- --------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION prevent_audit_log_tampering()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'سجل التدقيق غير قابل للتعديل أو الحذف لحفظ سلامة الحوكمة والأمان.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_audit_log_immutable ON public.audit_logs;
+CREATE TRIGGER trg_audit_log_immutable
+BEFORE UPDATE OR DELETE ON public.audit_logs
+FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_tampering();
+
+-- --------------------------------------------------------------------
+-- 9. تفعيل النقل والتحديث الفوري (Supabase Realtime)
 -- --------------------------------------------------------------------
 DO $$
 BEGIN
