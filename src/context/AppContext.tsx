@@ -1123,6 +1123,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           }
         )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'user_favorites' },
+          (payload) => {
+            if (currentUser.id) {
+              SupabaseAdapter.fetchFavorites(currentUser.id).then(res => {
+                if (res.success && res.data) {
+                  setFavorites(res.data);
+                }
+              });
+            }
+          }
+        )
         .subscribe();
 
       return () => {

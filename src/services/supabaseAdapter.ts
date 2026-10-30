@@ -524,4 +524,154 @@ export class SupabaseAdapter {
       return { success: false, error: err.message };
     }
   }
+
+  // ==========================================
+  // 6. المحادثات والرسائل الفورية (Chat Messages)
+  // ==========================================
+
+  static async fetchChatMessages(bookingId: string): Promise<{ success: boolean; data?: any[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('chat_messages')
+        .select('*')
+        .eq('booking_id', bookingId)
+        .order('created_at', { ascending: true });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: data || [] };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async sendChatMessage(
+    bookingId: string,
+    senderId: string,
+    senderName: string,
+    senderRole: string,
+    messageText: string,
+    attachments: any[] = []
+  ): Promise<{ success: boolean; data?: any; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = {
+        booking_id: bookingId,
+        sender_id: senderId,
+        sender_name: senderName,
+        sender_role: senderRole,
+        message_text: messageText,
+        attachments: attachments,
+        is_read: false
+      };
+
+      const { data, error } = await client
+        .from('chat_messages')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 7. القائمة المفضلة للمستخدمين (User Favorites)
+  // ==========================================
+
+  static async fetchFavorites(userId: string): Promise<{ success: boolean; data?: string[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('user_favorites')
+        .select('listing_id')
+        .eq('user_id', userId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(f => f.listing_id) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async toggleFavoriteInDb(userId: string, listingId: string): Promise<{ success: boolean; isFavorite?: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: existing } = await client
+        .from('user_favorites')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('listing_id', listingId)
+        .maybeSingle();
+
+      if (existing) {
+        await client.from('user_favorites').delete().eq('id', existing.id);
+        return { success: true, isFavorite: false };
+      } else {
+        const id = `fav-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        await client.from('user_favorites').insert({ id, user_id: userId, listing_id: listingId });
+        return { success: true, isFavorite: true };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 8. التخزين السحابي والوثائق الموقعة (Supabase Storage)
+  // ==========================================
+
+  static async uploadDocumentToStorage(
+    bucketName: string,
+    filePath: string,
+    file: Blob | File
+  ): Promise<{ success: boolean; path?: string; publicUrl?: string; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client.storage
+        .from(bucketName)
+        .upload(filePath, file, { upsert: true });
+
+      if (error) return { success: false, error: error.message };
+
+      const { data: pubUrl } = client.storage.from(bucketName).getPublicUrl(filePath);
+      return { success: true, path: data.path, publicUrl: pubUrl?.publicUrl };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async getSignedDocumentUrl(
+    bucketName: string,
+    filePath: string,
+    expiresInSeconds: number = 3600
+  ): Promise<{ success: boolean; signedUrl?: string; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client.storage
+        .from(bucketName)
+        .createSignedUrl(filePath, expiresInSeconds);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, signedUrl: data.signedUrl };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
 }
+
