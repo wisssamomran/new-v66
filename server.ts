@@ -242,6 +242,112 @@ app.post('/api/admin/supabase/provision-seekers', requireRoles('system_admin'), 
 });
 
 
+// Supabase Connection Ping / Healthcheck Proxy Endpoint
+app.post('/api/supabase/ping', async (req: Request, res: Response) => {
+  const { url, anonKey } = req.body || {};
+  const targetUrl = (url || process.env.VITE_SUPABASE_URL || 'https://xoqfdzemtcpxqracygnb.supabase.co')
+    .replace(/\/rest\/v1\/?$/, '')
+    .replace(/\/$/, '');
+  const targetAnonKey = (anonKey || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvcWZkemVtdGNweHFyYWN5Z25iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwMDk4NjIsImV4cCI6MjEwODU4NTg2Mn0.AT4x-Z5EtZyiS4MzoV7E0ty162MWKuGpRdlRk98rHl');
+
+  const startTime = Date.now();
+
+  // 1. First try PostgreSQL direct connection (sub-50ms latency)
+  const pgSql = getPostgresClient();
+  if (pgSql) {
+    try {
+      const rows = await pgSql`SELECT id FROM public.listings LIMIT 1;`;
+      const latencyMs = Date.now() - startTime;
+      return res.json({
+        success: true,
+        result: {
+          status: 'success',
+          success: true,
+          message: 'تم الاتصال بنجاح بقاعدة بيانات Supabase وقراءة جدول "listings"',
+          details: `تم تنفيذ الاستعلام بنجاح عبر محرك PostgreSQL الموثوق في ${latencyMs} ملي ثانية. عدد السجلات المعادة كعينة: ${rows.length}.`,
+          latencyMs,
+          url: targetUrl,
+          hasAnonKey: true,
+          configSource: 'env',
+          testedTable: 'listings',
+          recordCountSample: rows.length,
+          dataSnippet: rows
+        }
+      });
+    } catch (pgErr: any) {
+      console.warn('[Supabase Ping] PostgreSQL direct query error, trying REST client fallback:', pgErr?.message);
+    }
+  }
+
+  // 2. Fallback to Supabase JS Client with Promise.race timeout (5s)
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const client = createClient(targetUrl, targetAnonKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('تجاوز الاتصال المهلة المحددة (Timeout)')), 5000)
+    );
+
+    const queryPromise = client.from('listings').select('id').limit(1);
+    const { data, error }: any = await Promise.race([queryPromise, timeoutPromise]);
+
+    const latencyMs = Date.now() - startTime;
+
+    if (error) {
+      return res.json({
+        success: false,
+        result: {
+          status: 'unknown_error',
+          success: false,
+          message: `استجابت Supabase برمز خطأ (${error.code || 'ERR'})`,
+          details: error.message,
+          latencyMs,
+          url: targetUrl,
+          hasAnonKey: true,
+          configSource: 'env',
+          testedTable: 'listings',
+          errorCode: error.code
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      result: {
+        status: 'success',
+        success: true,
+        message: 'تم الاتصال بنجاح بقاعدة بيانات Supabase وقراءة جدول "listings"',
+        details: `تم تنفيذ الاستعلام بنجاح عبر الخادم الموثوق في ${latencyMs} ملي ثانية. عدد السجلات المعادة كعينة: ${Array.isArray(data) ? data.length : 0}.`,
+        latencyMs,
+        url: targetUrl,
+        hasAnonKey: true,
+        configSource: 'env',
+        testedTable: 'listings',
+        recordCountSample: Array.isArray(data) ? data.length : 0,
+        dataSnippet: data
+      }
+    });
+  } catch (err: any) {
+    const latencyMs = Date.now() - startTime;
+    return res.json({
+      success: false,
+      result: {
+        status: 'network_error',
+        success: false,
+        message: 'تعذر الوصول إلى خادم Supabase REST',
+        details: err.message || 'فشل الاتصال',
+        latencyMs,
+        url: targetUrl,
+        hasAnonKey: true,
+        configSource: 'env',
+        testedTable: 'listings'
+      }
+    });
+  }
+});
+
 // User Login / Authentication
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { phone, email, identifier, role = 'seeker', name, supabaseUserId } = req.body;

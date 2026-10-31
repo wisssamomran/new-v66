@@ -82,6 +82,24 @@ export async function testSupabaseConnection(customConfig?: {
     };
   }
 
+  // First, attempt server-side ping proxy to bypass browser iframe CORS restrictions
+  try {
+    const proxyRes = await fetch('/api/supabase/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: testUrl, anonKey: testAnonKey })
+    });
+    const contentType = proxyRes.headers.get('content-type') || '';
+    if (proxyRes.ok && contentType.includes('application/json')) {
+      const data = await proxyRes.json();
+      if (data && data.result) {
+        return data.result;
+      }
+    }
+  } catch (proxyErr) {
+    console.warn('[Supabase Connection Test] Server proxy test skipped, trying direct client fetch:', proxyErr);
+  }
+
   const client = getSupabaseClient(testUrl, testAnonKey);
   if (!client) {
     return {
