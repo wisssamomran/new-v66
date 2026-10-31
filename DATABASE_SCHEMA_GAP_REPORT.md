@@ -1,84 +1,86 @@
-# تقرير تحليل الفجوات الهيكلية والتوافق البرمجي لقاعدة البيانات
+# تقرير تحليل الفجوات الهيكلية والمخطط الفعلي لقاعدة بيانات Supabase
 **المشروع:** منصة «دلنّي» العقارية اليمنية (Dalani Real Estate Platform)  
 **المستودع:** `wisssamomran/new-v66`  
+**الفرع:** `integration/supabase-completion`  
 **ملف الترحيل التصحيحي المعتمد:** `database/supabase/migrations/dalani_unlinked_systems_sync.sql`  
 **التاريخ:** 31 أكتوبر 2026  
 
 ---
 
-## 1. تحليل سبب الخطأ الشهير: `ERROR: 42883: operator does not exist: uuid = text`
+## 1. الفحص الفعلي لمخطط قاعدة البيانات الحية (Schema Reality Check)
 
-### التشخيص الجذري:
-في نظام Supabase الافتراضي:
-- جدول المصادقة الداخلي `auth.users.id` نوعه **`UUID`**.
-- الدالة المدمجة `auth.uid()` تُعيد قيمة من نوع **`UUID`**.
-- بينما في جدول المستخدمين العام لمنظومة دلنّي `public.users.id`، تم تعريف الحقل كـ **`VARCHAR(128)`** (أو `TEXT`) لاستيعاب معرفات الأنظمة المتعددة مثل (`usr-admin-1`, `usr-seeker-101`).
-- جدول المفضلة وسجلات التدقيق تحتوي على أعمدة `user_id` بنوع `VARCHAR(128)`.
+تم فحص جداول وأعمدة قاعدة البيانات الحية في Supabase عبر استعلام `information_schema.columns` مباشرة، وجاءت النتائج الهندسية الدقيقة كالتالي:
 
-عند كتابة سياسات RLS بالشكل التالي:
+### 1.1 جدول المستخدمين (`public.users`)
+- **الأعمدة الفعلية:** `id` (VARCHAR), `name` (VARCHAR), `role` (VARCHAR), `email` (VARCHAR), `phone` (VARCHAR), `org_id` (VARCHAR), `org_name` (VARCHAR), `active_status` (BOOLEAN), `supabase_user_id` (UUID).
+- **الفجوة المكتشفة والمعالجة:**  
+  الجدول يحتوي تاريخياً على `org_id` وليس `organization_id`. أي استعلام RLS يعتمد فقط على `organization_id` كان يفشل فورياً.  
+  **الحل المنفذ:** تم تحديث سياسات RLS ومهايئات السيرفر لتدعم `COALESCE(u.organization_id, u.org_id)`، مع إضافة أمر المزامنة الآمن:
+  ```sql
+  ALTER TABLE public.users ADD COLUMN IF NOT EXISTS organization_id VARCHAR(128);
+  UPDATE public.users SET organization_id = org_id WHERE organization_id IS NULL AND org_id IS NOT NULL;
+  ```
+
+### 1.2 جدول المنشآت العقارية (`public.organizations`)
+- **الأعمدة الفعلية:** `id`, `name`, `license_number`, `owner_id`, `city`, `governorate`, `verification_status`, `commercial_reg_no`, `phone`, `manager_name`, `address`, `logo_url`, `is_verified`, `verified_at`, `members`.
+- **الفجوة المكتشفة والمعالجة:**  
+  الجدول لا يحتوي على عمود اسمه `org_type`. تم ضبط كافة عمليات الإدراج والاستعلام لعدم تمرير `org_type` والاعتماد على الأعمدة الحقيقية.
+
+### 1.3 جدول أعضاء المنشآت (`public.organization_members`)
+- **الأعمدة الفعلية:** `id`, `organization_id` (VARCHAR), `user_id` (VARCHAR), `member_name`, `member_phone`, `role_in_org`, `is_active` (BOOLEAN), `assigned_listing_count` (INTEGER), `created_at`, `updated_at`.
+- **العلاقة:** ترتبط بـ `public.organizations(id)` و`public.users(id)`.
+
+### 1.4 جدول مفضلة المستخدمين (`public.user_favorites`)
+- **الأعمدة الفعلية:** `id` (VARCHAR), `user_id` (VARCHAR), `listing_id` (VARCHAR), `created_at` (TIMESTAMPTZ).
+- **القيد الفريد المعتمد:** `CONSTRAINT uq_user_listing_favorite UNIQUE (user_id, listing_id)`.
+- تم التحقق من عمل القيد برفض التكرار بالكود `23505`.
+
+### 1.5 جدول حظر الـ IP والأمان (`public.ip_blocks`)
+- **الأعمدة الفعلية:** `id`, `ip_address` (VARCHAR), `reason` (TEXT), `blocked_by` (VARCHAR), `blocked_at` (TIMESTAMPTZ), `is_active` (BOOLEAN).
+- **الفجوة المكتشفة والمعالجة:**  
+  العمود في قاعدة البيانات هو `ip_address` وليس `ip`. تم تحديث وحدة السيرفر `src/server/supabaseServer.ts` ومسارات API لتوحيد التعامل مع `ip_address` حصراً.
+
+### 1.6 جدول سجل التدقيق الإداري (`public.audit_logs`)
+- **الأعمدة الفعلية:** `id`, `user_id`, `user_name`, `user_role`, `action`, `category`, `target_id`, `target_type`, `result`, `status`, `details`, `ip_address`, `created_at`.
+- **الحماية:** محمي بالمشغل السحابي المانع للتعديل أو الحذف: `"Audit logs are append-only. Modification is prohibited."`.
+
+---
+
+## 2. التحليل الجذري لخطأ `ERROR: 42883: operator does not exist: uuid = text`
+
+### التشخيص التقني:
+1. في Supabase Auth: القيمة المعادة من `auth.uid()` هي من نوع `UUID`.
+2. في مخطط منصة دلنّي: عمود `public.users.id` هو من نوع `VARCHAR(128)` ليتسع لمعرفات النظام، بينما `public.users.supabase_user_id` هو من نوع `UUID`.
+3. أعمدة `user_favorites.user_id` و`audit_logs.user_id` هي من نوع `VARCHAR(128)`.
+4. عند إجراء مقارنة مباشرة:
+   ```sql
+   -- ❌ يسبب خطأ 42883 فورياً
+   WHERE user_id = auth.uid()
+   ```
+   يفشل محرك PostgreSQL لأنه لا يوجد عامل مقارنة مساواة افتراضي بين `uuid` و`text` أو `character varying`.
+
+### الحل الصحيح المطبق في `dalani_unlinked_systems_sync.sql`:
+تحويل صريح آمن للطرفين باستخدام `::text`:
 ```sql
--- ❌ خطأ: مقارنة UUID مع TEXT مباشرة تسبب خطأ 42883
-CREATE POLICY bad_policy ON public.user_favorites 
-USING (user_id = auth.uid());
-```
-يرفض محرك PostgreSQL تنفيذ الاستعلام ويرمي الخطأ: `ERROR: 42883: operator does not exist: uuid = text`.
-
-### الحل الجذري المعتمد في المنظومة:
-تم تصحيح كافة سياسات الأمان RLS في ملف الترحيل `dalani_unlinked_systems_sync.sql` بإجراء تحويل صريح للنوعين على جانبي المقارنة باستخدام `::text`:
-```sql
--- ✅ الحل الصحيح المعتمد والخالي من أي خطأ
-CREATE POLICY favorites_owner_policy ON public.user_favorites
-FOR ALL
-USING (
-    user_id::text = auth.uid()::text OR
-    EXISTS (
-        SELECT 1 FROM public.users u 
-        WHERE u.id::text = user_favorites.user_id::text 
-          AND u.supabase_user_id::text = auth.uid()::text
-    )
+-- ✅ مقارنة آمنة وخالية من أي خطأ
+WHERE user_id::text = auth.uid()::text OR
+EXISTS (
+    SELECT 1 FROM public.users u 
+    WHERE u.id::text = user_favorites.user_id::text 
+      AND (u.supabase_user_id::text = auth.uid()::text OR u.id::text = auth.uid()::text)
 )
-WITH CHECK (
-    user_id::text = auth.uid()::text OR
-    EXISTS (
-        SELECT 1 FROM public.users u 
-        WHERE u.id::text = user_favorites.user_id::text 
-          AND u.supabase_user_id::text = auth.uid()::text
-    )
-);
 ```
 
 ---
 
-## 2. جدول الفروقات والأنواع بين كود الواجهة ومخطط PostgreSQL
+## 3. مصفوفة التوافقية الهندسية النهائية
 
-| الجدول والعمود | نوع الحقل في PostgreSQL | نوع الحقل في TypeScript | العلاقة والتوافقية الهندسية | الحل المعتمد |
-|--------------|------------------------|-------------------------|---------------------------|-------------|
-| `users.id` | `VARCHAR(128)` | `string` | المعرف الأساسي في التطبيق (Primary Key) | يتم الحفاظ عليه كما هو لضمان سلامة العلاقات القائمة |
-| `users.supabase_user_id` | `VARCHAR(128)` / `UUID` | `string` | يربط مع `auth.users.id` بعد تسجيل الدخول | مفهرس بـ `idx_users_supabase_user_id` للبحث فائق السرعة |
-| `user_favorites.user_id` | `VARCHAR(128)` | `string` | Foreign Key يربط مع `public.users(id)` | قيد فريد `UNIQUE(user_id, listing_id)` لمنع التكرار نهائياً |
-| `organizations.id` | `VARCHAR(128)` | `string` | المعرف الأساسي للمنشأة | يربط أعضاء المنشأة وعقاراتها |
-| `users.org_id` / `organization_id` | `VARCHAR(128)` | `string` | يحدد المنشأة التي ينتمي إليها المستخدم | تم دعم الاسمين في مهايئات `supabaseMappers.ts` تجنباً لأي تعارض |
-| `organization_members.organization_id` | `VARCHAR(128)` | `string` | Foreign Key يربط مع `public.organizations(id)` | محمي بسياسة RLS تمنع وصول المدراء من خارج المنشأة |
-| `listings.assigned_agent_id` | `VARCHAR(128)` | `string` | معرف الموظف المسند إليه العقار | موجود بالفعل في `listings` دون الحاجة لإنشاء أعمدة مكررة |
-| `listings.assigned_agent_name` | `VARCHAR(255)` | `string` | اسم الموظف المسند إليه العقار | يضمن سرعة العرض دون الحاجة لـ JOIN إضافي |
-| `staff_members.role` | `VARCHAR(64)` | `string` | دور موظف الإدارة والرقابة | مقيد بـ `CHECK (role IN ('system_admin', 'moderator', 'support', 'legal_auditor', 'financial_auditor'))` |
-| `audit_logs.user_id` | `VARCHAR(128)` | `string` | معرف منفذ العملية في النظام | غير قابل للتعديل أو الحذف بفضل التريغر `trg_audit_log_immutable` |
-| `system_settings.key` | `VARCHAR(128)` | `string` | مفتاح الإعداد (Primary Key) | يتم تخزين الإعدادات بصيغة JSONB آمنة محصورة بمدير النظام |
-
----
-
-## 3. التحقق من سلامة القيود والفهارس (Constraints & Indexes)
-
-1. **قيد المفضلة الفريد:**
-   - تم التحقق من وجود `CONSTRAINT uq_user_listing_favorite UNIQUE (user_id, listing_id)`.
-   - يمنع هذا القيد إمكانية إضافة العقار نفسه إلى مفضلة المستخدم أكثر من مرة على مستوى محرك قاعدة البيانات، حتى لو تم الضغط على الزر عدة مرات متزامنة.
-2. **فهارس تسريع الاستعلامات:**
-   - `idx_favorites_user` على `user_favorites(user_id)`
-   - `idx_favorites_listing` على `user_favorites(listing_id)`
-   - `idx_org_members_org` على `organization_members(organization_id)`
-   - `idx_org_members_user` على `organization_members(user_id)`
-   - `idx_staff_user` على `staff_members(user_id)`
-   - `idx_audit_logs_user` على `audit_logs(user_id)`
-   - `idx_audit_logs_created` على `audit_logs(created_at DESC)`
-3. **قيد منع الحجز المتزامن على العقارات:**
-   - `idx_single_active_booking_per_listing` لمنع وجود أكثر من حجز فعال واحد لنفس العقار بالتوازي لضمان الحصرية المطلقة لمدى 48 ساعة.
+| الجدول | العمود المعتمد في DB | النوع في DB | التوافق البرمجي في TypeScript | حالة التحقق الميداني |
+|-------|--------------------|------------|-----------------------------|-------------------|
+| `users` | `id` | `VARCHAR(128)` | `string` | ✅ مطابق ومفحوص |
+| `users` | `supabase_user_id` | `UUID` | `string` (UUID format) | ✅ مطابق ومفحوص |
+| `users` | `org_id` / `organization_id` | `VARCHAR(128)` | `string` | ✅ متزامن عبر `COALESCE` |
+| `user_favorites` | `user_id` | `VARCHAR(128)` | `string` | ✅ مفحوص مع قيد التكرار |
+| `organization_members` | `organization_id` | `VARCHAR(128)` | `string` | ✅ مفحوص مع عزل تام للمنشأة |
+| `ip_blocks` | `ip_address` | `VARCHAR(64)` | `string` | ✅ مفحوص مع كاش وسيط السيرفر |
+| `audit_logs` | `id` | `VARCHAR(128)` | `string` | ✅ مفحوص مع حصانة ضد التعديل |

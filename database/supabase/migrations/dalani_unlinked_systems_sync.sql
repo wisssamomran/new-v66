@@ -6,6 +6,14 @@
 -- ====================================================================
 
 -- --------------------------------------------------------------------
+-- 1.0 مزامنة أعمدة المنشأة في جدول المستخدمين (org_id vs organization_id)
+-- --------------------------------------------------------------------
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS organization_id VARCHAR(128);
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS org_id VARCHAR(128);
+UPDATE public.users SET organization_id = org_id WHERE organization_id IS NULL AND org_id IS NOT NULL;
+UPDATE public.users SET org_id = organization_id WHERE org_id IS NULL AND organization_id IS NOT NULL;
+
+-- --------------------------------------------------------------------
 -- 1. جدول مفضلة المستخدمين (public.user_favorites)
 -- --------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.user_favorites (
@@ -64,14 +72,21 @@ CREATE INDEX IF NOT EXISTS idx_staff_email ON public.staff_members(email);
 -- --------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.ip_blocks (
     id VARCHAR(128) PRIMARY KEY DEFAULT 'ipb-' || uuid_generate_v4()::text,
-    ip_address VARCHAR(64) NOT NULL UNIQUE,
+    ip_address VARCHAR(64) UNIQUE,
+    ip VARCHAR(64) UNIQUE,
     reason TEXT NOT NULL,
     blocked_by VARCHAR(128) REFERENCES public.users(id) ON DELETE SET NULL,
     blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_ip_blocks_active ON public.ip_blocks(ip_address) WHERE is_active = TRUE;
+ALTER TABLE public.ip_blocks ADD COLUMN IF NOT EXISTS ip_address VARCHAR(64);
+ALTER TABLE public.ip_blocks ADD COLUMN IF NOT EXISTS ip VARCHAR(64);
+UPDATE public.ip_blocks SET ip = ip_address WHERE ip IS NULL AND ip_address IS NOT NULL;
+UPDATE public.ip_blocks SET ip_address = ip WHERE ip_address IS NULL AND ip IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ip_blocks_active ON public.ip_blocks(COALESCE(ip_address, ip)) WHERE is_active = TRUE;
 
 -- --------------------------------------------------------------------
 -- 5. جدول إعدادات وميزات النظام (public.system_settings)
@@ -123,7 +138,7 @@ CREATE POLICY favorites_owner_policy ON public.user_favorites
         EXISTS (
             SELECT 1 FROM public.users u 
             WHERE u.id::text = user_favorites.user_id::text 
-              AND u.supabase_user_id::text = auth.uid()::text
+              AND (u.supabase_user_id::text = auth.uid()::text OR u.id::text = auth.uid()::text)
         )
     )
     WITH CHECK (
@@ -131,7 +146,7 @@ CREATE POLICY favorites_owner_policy ON public.user_favorites
         EXISTS (
             SELECT 1 FROM public.users u 
             WHERE u.id::text = user_favorites.user_id::text 
-              AND u.supabase_user_id::text = auth.uid()::text
+              AND (u.supabase_user_id::text = auth.uid()::text OR u.id::text = auth.uid()::text)
         )
     );
 
@@ -145,7 +160,7 @@ CREATE POLICY org_members_read_policy ON public.organization_members
             WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
               AND (
                   u.role IN ('system_admin', 'moderator') OR
-                  (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
+                  (COALESCE(u.organization_id, u.org_id) IS NOT NULL AND COALESCE(u.organization_id, u.org_id)::text = organization_members.organization_id::text)
               )
         )
     );
@@ -158,7 +173,7 @@ CREATE POLICY org_members_write_policy ON public.organization_members
             SELECT 1 FROM public.users u
             WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
               AND u.role IN ('system_admin', 'org_manager', 'organization_manager')
-              AND (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
+              AND (COALESCE(u.organization_id, u.org_id) IS NOT NULL AND COALESCE(u.organization_id, u.org_id)::text = organization_members.organization_id::text)
         )
     )
     WITH CHECK (
@@ -166,7 +181,7 @@ CREATE POLICY org_members_write_policy ON public.organization_members
             SELECT 1 FROM public.users u
             WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
               AND u.role IN ('system_admin', 'org_manager', 'organization_manager')
-              AND (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
+              AND (COALESCE(u.organization_id, u.org_id) IS NOT NULL AND COALESCE(u.organization_id, u.org_id)::text = organization_members.organization_id::text)
         )
     );
 
@@ -265,7 +280,98 @@ BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_tampering();
 
 -- --------------------------------------------------------------------
--- 9. تفعيل النقل والتحديث الفوري (Supabase Realtime)
+-- 9. إحكام سياسات الأمان القديمة واستبدال USING (TRUE) / WITH CHECK (TRUE)
+-- --------------------------------------------------------------------
+-- 9.1 منع التعديل العشوائي للمستخدمين ومنع تصعيد الأدوار
+DROP POLICY IF EXISTS "users_self_write" ON public.users;
+CREATE POLICY "users_self_write" ON public.users
+    FOR UPDATE
+    USING (
+        id::text = auth.uid()::text 
+        OR supabase_user_id::text = auth.uid()::text 
+        OR EXISTS (
+            SELECT 1 FROM public.users u 
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    )
+    WITH CHECK (
+        (
+            id::text = auth.uid()::text 
+            OR supabase_user_id::text = auth.uid()::text
+        ) AND (
+            role IS NULL 
+            OR role = (SELECT u_old.role FROM public.users u_old WHERE u_old.id = users.id)
+            OR EXISTS (
+                SELECT 1 FROM public.users u 
+                WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+                  AND u.role = 'system_admin'
+            )
+        )
+    );
+
+-- 9.2 حماية تعديل المنشآت بحصرها في مدير المنشأة أو مدير النظام
+DROP POLICY IF EXISTS "orgs_write" ON public.organizations;
+CREATE POLICY "orgs_write" ON public.organizations
+    FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND (
+                  u.role IN ('system_admin', 'moderator')
+                  OR (COALESCE(u.organization_id, u.org_id)::text = organizations.id::text AND u.role IN ('org_manager', 'organization_manager', 'office_admin'))
+              )
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND (
+                  u.role IN ('system_admin', 'moderator')
+                  OR (COALESCE(u.organization_id, u.org_id)::text = organizations.id::text AND u.role IN ('org_manager', 'organization_manager', 'office_admin'))
+              )
+        )
+    );
+
+-- 9.3 حصر إضافة وتعديل الإعلانات بالمعلن المالك أو مسؤولي النظام
+DROP POLICY IF EXISTS "listings_insert_advertisers" ON public.listings;
+CREATE POLICY "listings_insert_advertisers" ON public.listings
+    FOR INSERT
+    WITH CHECK (
+        advertiser_id::text = auth.uid()::text
+        OR EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE u.id::text = listings.advertiser_id::text
+              AND (u.supabase_user_id::text = auth.uid()::text OR u.id::text = auth.uid()::text)
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    );
+
+DROP POLICY IF EXISTS "listings_update_owner_or_admin" ON public.listings;
+CREATE POLICY "listings_update_owner_or_admin" ON public.listings
+    FOR UPDATE
+    USING (
+        advertiser_id::text = auth.uid()::text
+        OR EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE u.id::text = listings.advertiser_id::text
+              AND (u.supabase_user_id::text = auth.uid()::text OR u.id::text = auth.uid()::text)
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND u.role IN ('system_admin', 'moderator')
+        )
+    );
+
+-- --------------------------------------------------------------------
+-- 10. تفعيل النقل والتحديث الفوري (Supabase Realtime)
 -- --------------------------------------------------------------------
 DO $$
 BEGIN
@@ -279,3 +385,4 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Realtime publication updated safely.';
 END $$;
+

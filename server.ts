@@ -14,6 +14,15 @@ import {
   recordAuditLog
 } from './src/server/rbac';
 import {
+  isIpBlockedInDatabase,
+  getBlockedIpsFromDatabase,
+  addBlockedIpToDatabase,
+  removeBlockedIpFromDatabase,
+  findUserInDatabase,
+  updateUserInDatabase,
+  getSupabaseServer
+} from './src/server/supabaseServer';
+import {
   User,
   Listing,
   ListingStatus,
@@ -66,12 +75,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// IP Block Guard Middleware
-const ipBlockGuard = (req: Request, res: Response, next: any) => {
+// IP Block Guard Middleware (Asynchronous database-backed with in-memory TTL fast-path)
+const ipBlockGuard = async (req: Request, res: Response, next: any) => {
   const rawIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+  const cleanIp = rawIp.replace('::ffff:', '').trim();
+  
+  // 1. Direct database check
+  const isBlockedDb = await isIpBlockedInDatabase(cleanIp);
+  
+  // 2. Secondary fallback check
   const blockedList = db.getBlockedIps ? db.getBlockedIps() : [];
-  const isBlocked = blockedList.some(b => (b.ip === rawIp || (b as any).ipAddress === rawIp));
-  if (isBlocked) {
+  const isBlockedLocal = blockedList.some(b => (b.ip === rawIp || (b as any).ipAddress === rawIp || b.ip === cleanIp));
+  
+  if (isBlockedDb || isBlockedLocal) {
     return res.status(403).json({ error: 'تم حظر هذا العنوان (IP) من الوصول لخدمات المنصة لمخالفة معايير الأمان.' });
   }
   next();
@@ -227,22 +243,24 @@ app.post('/api/admin/supabase/provision-seekers', requireRoles('system_admin'), 
 
 
 // User Login / Authentication
-app.post('/api/auth/login', (req: Request, res: Response) => {
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { phone, email, identifier, role = 'seeker', name, supabaseUserId } = req.body;
-  const loginTarget = (identifier || email || phone || '').trim();
+  const loginTarget = (identifier || email || phone || supabaseUserId || '').trim();
   const cleanEmail = loginTarget.toLowerCase();
   const cleanPhone = loginTarget.replace(/[\s\-\(\)\+]/g, '');
 
-  const allUsers = db.getUsers();
   let user: User | undefined;
 
-  // 1. If supabaseUserId is provided (from Supabase Auth), find by supabase_user_id
-  if (supabaseUserId) {
-    user = allUsers.find(u => u.supabaseUserId === supabaseUserId);
+  // 1. Check Supabase database first
+  const dbUser = await findUserInDatabase(loginTarget);
+  if (dbUser) {
+    user = dbUser;
+    db.updateUser(user.id, user); // sync local cache
   }
 
-  // 2. If identifier / email / phone provided, find by email or ID or phone
+  // 2. If not found in Supabase direct query, search memory cache
   if (!user && loginTarget) {
+    const allUsers = db.getUsers();
     user = allUsers.find(u => {
       if (u.email && u.email.toLowerCase() === cleanEmail) return true;
       if (u.id === loginTarget) return true;
@@ -255,7 +273,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     });
   }
 
-  // 3. If new user registration
+  // 3. If new user registration, persist into Supabase
   if (!user && loginTarget) {
     const newId = `usr-${Date.now()}`;
     user = {
@@ -270,6 +288,24 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
       createdAt: new Date().toISOString().split('T')[0]
     };
     db.updateUser(user.id, user);
+
+    try {
+      const client = getSupabaseServer();
+      await client.from('users').upsert({
+        id: user.id,
+        supabase_user_id: user.supabaseUserId || null,
+        name: user.name,
+        role: user.role,
+        email: user.email || null,
+        phone: user.phone || null,
+        phone_verified: user.phoneVerified,
+        active_status: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+    } catch (dbErr) {
+      console.warn('[Supabase Server] Error creating new user in DB:', dbErr);
+    }
   }
 
   if (!user) {
@@ -296,7 +332,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 // ==========================================
 
 // Update User Profile
-app.put('/api/user/profile', (req: Request, res: Response) => {
+app.put('/api/user/profile', async (req: Request, res: Response) => {
   if (req.currentUser.role === 'visitor') {
     return res.status(401).json({ error: 'يجب تسجيل الدخول لتحديث الملف الشخصي' });
   }
@@ -323,9 +359,13 @@ app.put('/api/user/profile', (req: Request, res: Response) => {
     updates.avatarUrl = avatarUrl.trim();
   }
 
+  // Update in Supabase database
+  const dbUpdated = await updateUserInDatabase(req.currentUser.id, updates);
   const updated = db.updateUser(req.currentUser.id, updates);
-  if (!updated) {
-    return res.status(404).json({ error: 'تعذر العثور على سجل المستخدم' });
+  const finalUser = dbUpdated || updated;
+
+  if (!finalUser) {
+    return res.status(404).json({ error: 'تعذر العثور على سجل المستخدم في قاعدة البيانات' });
   }
 
   recordAuditLog(
@@ -334,12 +374,12 @@ app.put('/api/user/profile', (req: Request, res: Response) => {
     'user',
     req.currentUser.id,
     'success',
-    `تم تحديث بيانات الملف الشخصي للمستخدم [${updated.name}]`
+    `تم تحديث بيانات الملف الشخصي للمستخدم [${finalUser.name}] في قاعدة البيانات`
   );
 
   return res.json({
     message: 'تم تحديث الملف الشخصي بنجاح',
-    user: updated
+    user: finalUser
   });
 });
 
@@ -485,7 +525,7 @@ app.get('/api/user/export-data', (req: Request, res: Response) => {
 });
 
 // Deactivate Account
-app.post('/api/user/deactivate', (req: Request, res: Response) => {
+app.post('/api/user/deactivate', async (req: Request, res: Response) => {
   if (req.currentUser.role === 'visitor') {
     return res.status(401).json({ error: 'يجب تسجيل الدخول لتعطيل الحساب' });
   }
@@ -498,6 +538,8 @@ app.post('/api/user/deactivate', (req: Request, res: Response) => {
     }
   }
 
+  // Update in Supabase
+  await updateUserInDatabase(req.currentUser.id, { activeStatus: false });
   const updated = db.updateUser(req.currentUser.id, { activeStatus: false });
 
   // Invalidate any user sessions
@@ -513,7 +555,7 @@ app.post('/api/user/deactivate', (req: Request, res: Response) => {
     'user',
     req.currentUser.id,
     'warning',
-    `تم تعطيل حساب المستخدم [${req.currentUser.name}] بناءً على طلبه الشخصي`
+    `تم تعطيل حساب المستخدم [${req.currentUser.name}] بناءً على طلبه الشخصي في قاعدة البيانات`
   );
 
   return res.json({
@@ -523,7 +565,7 @@ app.post('/api/user/deactivate', (req: Request, res: Response) => {
 });
 
 // Reactivate Account
-app.post('/api/user/reactivate', (req: Request, res: Response) => {
+app.post('/api/user/reactivate', async (req: Request, res: Response) => {
   const { phone } = req.body;
   if (!phone) {
     return res.status(400).json({ error: 'رقم الهاتف مطلوب لإعادة التنشيط' });
@@ -534,11 +576,18 @@ app.post('/api/user/reactivate', (req: Request, res: Response) => {
     return res.status(422).json({ error: phoneCheck.error });
   }
 
-  const user = db.getUsers().find(u => u.phone === phoneCheck.normalized || u.phone === phone);
+  // Search in Supabase or local
+  const targetPhone = phoneCheck.normalized || phone;
+  let user = await findUserInDatabase(targetPhone);
+  if (!user) {
+    user = db.getUsers().find(u => u.phone === phoneCheck.normalized || u.phone === phone) || null;
+  }
+
   if (!user) {
     return res.status(404).json({ error: 'لم يتم العثور على حساب مرتبط بهذا الرقم' });
   }
 
+  await updateUserInDatabase(user.id, { activeStatus: true });
   const reactivated = db.updateUser(user.id, { activeStatus: true });
 
   recordAuditLog(
@@ -547,7 +596,7 @@ app.post('/api/user/reactivate', (req: Request, res: Response) => {
     'user',
     user.id,
     'success',
-    `تمت إعادة تفعيل حساب المستخدم [${user.name}] بنجاح`
+    `تمت إعادة تفعيل حساب المستخدم [${user.name}] بنجاح في قاعدة البيانات`
   );
 
   return res.json({
@@ -3302,16 +3351,18 @@ app.get(
 app.get(
   '/api/admin/security/blocked-ips',
   requireRoles('system_admin'),
-  (req: Request, res: Response) => {
-    const blockedIps = db.getBlockedIps();
-    return res.json({ blockedIps, count: blockedIps.length });
+  async (req: Request, res: Response) => {
+    const dbBlocked = await getBlockedIpsFromDatabase();
+    const localBlocked = db.getBlockedIps();
+    const combined = dbBlocked.length > 0 ? dbBlocked : localBlocked;
+    return res.json({ blockedIps: combined, count: combined.length });
   }
 );
 
 app.post(
   '/api/admin/security/block-ip',
   requireRoles('system_admin'),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const { ip, reason } = req.body;
     if (!ip) {
       return res.status(400).json({ error: 'عنوان الـ IP مطلوب' });
@@ -3326,44 +3377,46 @@ app.post(
       return res.status(400).json({ error: 'لا يمكنك حظر عنوان IP الخاص بجلسة إدارتك الحالية لمنع الإغلاق العرضي' });
     }
 
+    // Persist to database
+    await addBlockedIpToDatabase(ip, reason || 'سلوك مشبوه متكرر', req.currentUser.name);
     const blocked = db.blockIp(ip, reason || 'سلوك مشبوه متكرر', req.currentUser.name);
+
     recordAuditLog(
       req.currentUser,
-      'حظر عنوان IP مشبوه في طبقة الخادم',
+      'حظر عنوان IP مشبوه في قاعدة البيانات والخادم',
       'security',
       ip,
       'warning',
-      `تم حظر العنوان [${ip}] نهائياً. السبب: ${reason || 'سلوك مشبوه'}`
+      `تم حظر العنوان [${ip}] نهائياً في قاعدة البيانات. السبب: ${reason || 'سلوك مشبوه'}`
     );
 
-    return res.json({ message: 'تم حظر عنوان الـ IP بنجاح وحجب وصوله للخادم', blocked });
+    return res.json({ message: 'تم حظر عنوان الـ IP بنجاح وحجب وصوله للخادم وقاعدة البيانات', blocked });
   }
 );
 
 app.post(
   '/api/admin/security/unblock-ip',
   requireRoles('system_admin'),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const { ip } = req.body;
     if (!ip) {
       return res.status(400).json({ error: 'عنوان الـ IP مطلوب' });
     }
 
+    // Remove from database and memory
+    await removeBlockedIpFromDatabase(ip);
     const unblocked = db.unblockIp(ip);
-    if (!unblocked) {
-      return res.status(404).json({ error: 'العنوان غير مدرج في قائمة الحظر' });
-    }
 
     recordAuditLog(
       req.currentUser,
-      'رفع الحظر عن عنوان IP',
+      'إلغاء حظر عنوان IP',
       'security',
       ip,
       'success',
-      `تم فك الحظر عن العنوان [${ip}] وإعادة السماح له بالوصول`
+      `تم فك الحظر عن العنوان [${ip}] من قاعدة البيانات`
     );
 
-    return res.json({ message: 'تم رفع الحظر بنجاح', ip });
+    return res.json({ message: 'تم إلغاء حظر عنوان الـ IP بنجاح من قاعدة البيانات والخادم' });
   }
 );
 

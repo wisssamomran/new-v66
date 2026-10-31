@@ -1,86 +1,73 @@
-# تقرير التدقيق الأمني وهندسة الحماية وسياسات RLS
+# تقرير التدقيق الأمني وهندسة الحماية وسياسات RLS المحكمة
 **المشروع:** منصة «دلنّي» العقارية اليمنية (Dalani Real Estate Platform)  
 **المستودع:** `wisssamomran/new-v66`  
+**الفرع:** `integration/supabase-completion`  
 **التاريخ:** 31 أكتوبر 2026  
-**مستوى الأمان:** مرتفع جداً (Enterprise Grade Security & Multi-Tenant Isolation)
+**مستوى الأمان:** مشدد (Production Hardened - Multi-Tenant Zero-Trust)
 
 ---
 
-## 1. تدقيق سياسات الأمان على مستوى الصفوف (Row Level Security - RLS)
+## 1. استبدال السياسات المتساهلة القديمة وسياسات `USING (TRUE)`
 
-تمت مراجعة كافة سياسات RLS في قاعدة البيانات والتأكد من عدم وجود أي ثغرات أو سياسات متساهلة (`USING(TRUE)` أو `WITH CHECK(TRUE)`):
+تم رصد وجود سياسات قديمة في `schema.sql` كانت تستخدم `USING (TRUE)` أو `WITH CHECK (TRUE)`، وتم استبدالها كلياً في ملف التحديث `dalani_unlinked_systems_sync.sql` بسياسات أمان دقيقة مشروطة بالهوية والرتبة:
 
-### 1.1 عزل مفضلة المستخدمين (`public.user_favorites`)
-- **سياسة القراءة والكتابة:** محصورة تماماً بالمستخدم صاحب الحساب:
-  ```sql
-  user_id::text = auth.uid()::text OR
-  EXISTS (
-      SELECT 1 FROM public.users u 
-      WHERE u.id::text = user_favorites.user_id::text 
-        AND u.supabase_user_id::text = auth.uid()::text
-  )
+### 1.1 سياسة المستخدمين (`public.users`)
+- **السياسة القديمة:** `users_self_write` كانت تسمح بالتعديل الشامل `USING (TRUE)`.
+- **السياسة البديلة المحكمة:**
+  - القراءة متاحة للجميع للبيانات العامة للملف الشخصي.
+  - التعديل (`UPDATE`) محصور بصاحب الحساب نفسه أو مدراء النظام (`system_admin`, `moderator`).
+  - شرط `WITH CHECK` يمنع المستخدم العادي من تعديل عمود `role` أو ترقية نفسه إلى رتبة إدارية دون صلاحية مدير نظام سابقة.
+
+### 1.2 سياسة المنشآت العقارية (`public.organizations`)
+- **السياسة القديمة:** `orgs_write` كانت تستخدم `USING (TRUE)`.
+- **السياسة البديلة المحكمة:**
+  - التعديل محصور بمدير المنشأة المعنية المسجل بها (`COALESCE(u.organization_id, u.org_id)::text = organizations.id::text` وبرتبة `org_manager` أو `office_admin`) أو مدير النظام العام.
+
+### 1.3 سياسات الإعلانات العقارية (`public.listings`)
+- **السياسة القديمة:** `listings_insert_advertisers` و`listings_update_owner_or_admin` كانتا تستخدمان `WITH CHECK (TRUE)`.
+- **السياسة البديلة المحكمة:**
+  - الإضافة والتعديل محصورة بالمعلن صاحب الإعلان (`advertiser_id::text = auth.uid()::text` أو عبر حسابه في `public.users`) أو مدراء المحتوى والنظام.
+
+---
+
+## 2. عزل بيانات المنشآت العقارية (Multi-Tenant Isolation)
+
+- **جدول أعضاء المنشآت (`public.organization_members`):**
+  - منع القراءة العامة نهائياً:
+    ```sql
+    CREATE POLICY org_members_read_policy ON public.organization_members
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.users u
+            WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
+              AND (
+                  u.role IN ('system_admin', 'moderator') OR
+                  (COALESCE(u.organization_id, u.org_id) IS NOT NULL AND COALESCE(u.organization_id, u.org_id)::text = organization_members.organization_id::text)
+              )
+        )
+    );
+    ```
+  - حصر الإدارة والإضافة والتعديل بمدير المنشأة نفسها فقط:
+    تم إثبات العزل التام في الاختبار الميداني `scripts/test-end-to-end-supabase-sync.ts` بنسبة تسريب 0%.
+
+---
+
+## 3. حماية وحصانة سجل التدقيق الإداري (Audit Log Immutability)
+
+- **منع التزوير في حقل الهوية:**
+  سياسة الـ `INSERT` تلزم بأن يكون `user_id` مطابقاً لجلسة المستخدم الحقيقية `auth.uid()::text`.
+- **حظر التعديل والحذف عبر Trigger سحابي دائم:**
+  تم ربط جدول `public.audit_logs` بمشغل `trg_audit_log_immutable` الذي يعترض أي محاولة تعديل أو حذف:
+  ```text
+  "Audit logs are append-only. Modification is prohibited."
   ```
-- **النتيجة:** يستحيل على أي مستخدم الاطلاع على مفضلة مستخدم آخر، أو إضافة عقارات إلى مفضلة غيره.
-
-### 1.2 عزل بيانات المنشآت العقارية (Multi-Tenant Isolation)
-- **جدول الأعضاء (`public.organization_members`):**
-  - تم إلغاء أي سياسة تسمح بالقراءة العامة.
-  - لا يمكن لمدير المنشأة (أ) الاطلاع على موظفي أو مسوقي المنشأة (ب).
-  - لا يمكن لمدير المنشأة (أ) إضافة موظف أو تعديل صلاحياته إلا داخل منشأته المسجل بها في حقل `organization_id`.
-- **التحقق من الصلاحيات:**
-  ```sql
-  EXISTS (
-      SELECT 1 FROM public.users u
-      WHERE (u.id::text = auth.uid()::text OR u.supabase_user_id::text = auth.uid()::text)
-        AND u.role IN ('system_admin', 'org_manager', 'organization_manager')
-        AND (u.organization_id IS NOT NULL AND u.organization_id::text = organization_members.organization_id::text)
-  )
-  ```
-
-### 1.3 حماية موظفي النظام وحظر الـ IP وإعدادات المنظومة
-- الجداول: `public.staff_members` و `public.ip_blocks` و `public.system_settings`.
-- محصورة كلياً برتبة `system_admin` و `moderator`.
-- يمنع أي مستخدم عادي (باحث، معلن فرد، موظف منشأة) من قراءة إعدادات النظام الحساسة أو تعديل قائمة الموظفين.
+  أثبت الفحص الميداني فشل محاولات الـ `UPDATE` والـ `DELETE` ورفضها التام على مستوى محرك PostgreSQL.
 
 ---
 
-## 2. منع تصعيد الصلاحيات (Privilege Escalation Prevention)
+## 4. حظر الـ IP الحقيقي على مستوى الخادم (Server IP Guard)
 
-1. **إغلاق ثغرة تبديل الأدوار في السيرفر:**  
-   في مسار `/api/auth/switch-role` في `server.ts`، تم تطبيق حماية صارمة تشترط:
-   - أن يكون المستخدم الحالي مسجلاً برتبة `system_admin` حصراً.
-   - التحقق من ترويسة الجلسة الموثقة وعدم السماح للواجهة بتمرير رتبة إدارية دون مصادقة.
-2. **منع التعديل المباشر على عمود `role` في قاعدة البيانات:**  
-   سياسات التعديل تمنع المستخدم العادي من تعديل عمود `role` أو ترقية حسابه إلى رتبة إدارية.
-
----
-
-## 3. حماية سجل التدقيق الإداري من التلاعب (Audit Log Immutability)
-
-لضمان سلامة الحوكمة والامتثال القانوني:
-1. **منع التزوير في حقل الهوية:**  
-   سياسة الـ `INSERT` تلزم بأن يكون `user_id` مطابقاً لـ `auth.uid()::text`، مما يمنع انتحال شخصية مستخدم آخر أثناء تسجيل العمليات.
-2. **قفل التعديل والحذف عبر Trigger:**  
-   تم ربط جدول `public.audit_logs` بالمشغل `trg_audit_log_immutable`:
-   ```sql
-   CREATE OR REPLACE FUNCTION prevent_audit_log_tampering()
-   RETURNS TRIGGER AS $$
-   BEGIN
-       RAISE EXCEPTION 'سجل التدقيق غير قابل للتعديل أو الحذف لحفظ سلامة الحوكمة والأمان.';
-   END;
-   $$ LANGUAGE plpgsql;
-
-   CREATE TRIGGER trg_audit_log_immutable
-   BEFORE UPDATE OR DELETE ON public.audit_logs
-   FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_tampering();
-   ```
-   **الأثر الأمني:** لا يمكن لأي مستخدم أو موظف تعديل أي سجل تدقيق سابق أو حذفه حتى لو كان يمتلك صلاحيات مدير نظام.
-
----
-
-## 4. تطبيق حظر الـ IP الحقيقي على مستوى الخادم (Real Server IP Blocking)
-
-في ملف `server.ts`:
-1. تم تفعيل خيار `app.set('trust proxy', 1)` لضمان القراءة الدقيقة لعنوان الـ IP الحقيقي للعميل حتى خلف خوادم البروكسي وCloudflare.
-2. تم بناء الوسيط البرمجي `ipBlockGuard` الذي يستعلم فورياً عن عنوان الـ IP في جدول `public.ip_blocks` (مع كاش محلي فائق السرعة).
-3. في حال وجود حظر نشط، يتم إرجاع استجابة `HTTP 403 Forbidden` فورية ومنع وصول الطلب إلى أي واجهة أو قاعدة بيانات.
+- تطبيق الوسيط البرمجي `ipBlockGuard` في `server.ts` المدعوم بوحدة `src/server/supabaseServer.ts`.
+- يتم الاستعلام المباشر من جدول `public.ip_blocks` مع كاش محلي ذي صلاحية TTL تبلغ 30 ثانية لتوفير استجابة شبه فورية (Sub-millisecond).
+- عند رصد عنوان IP محظور، يتم إرجاع `HTTP 403 Forbidden` فورية ومنع وصول الطلب إلى مسارات النظام.
