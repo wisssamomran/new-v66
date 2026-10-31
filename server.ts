@@ -20,7 +20,8 @@ import {
   removeBlockedIpFromDatabase,
   findUserInDatabase,
   updateUserInDatabase,
-  getSupabaseServer
+  getSupabaseServer,
+  getPostgresClient
 } from './src/server/supabaseServer';
 import {
   User,
