@@ -542,3 +542,174 @@ export function mapAuditLogFromSupabase(row: any): AuditLogEntry {
     ipAddress: row.ip_address || undefined
   };
 }
+
+// ==========================================
+// 7. تحويل المنشآت والمكاتب العقارية (Organizations)
+// ==========================================
+export function mapOrganizationToSupabase(org: Organization): Record<string, any> {
+  return {
+    id: org.id,
+    name: org.name,
+    commercial_reg_no: org.commercialRegNo || null,
+    phone: org.phone || null,
+    owner_id: org.managerId || null,
+    manager_name: org.managerName || null,
+    governorate: org.governorate || null,
+    city: org.city || null,
+    address: org.address || null,
+    logo_url: org.logoUrl || null,
+    is_verified: Boolean(org.isVerified),
+    verification_status: org.isVerified ? 'verified' : 'pending',
+    verified_at: org.verifiedAt || null,
+    members: org.members || [],
+    updated_at: new Date().toISOString()
+  };
+}
+
+export function mapOrganizationFromSupabase(row: any): Organization {
+  return {
+    id: row.id,
+    name: row.name || 'منشأة عقارية',
+    commercialRegNo: row.commercial_reg_no || '',
+    phone: row.phone || '',
+    governorate: row.governorate || 'صنعاء',
+    city: row.city || 'صنعاء',
+    address: row.address || '',
+    isVerified: Boolean(row.is_verified),
+    verifiedAt: row.verified_at || undefined,
+    managerId: row.owner_id || '',
+    managerName: row.manager_name || '',
+    members: Array.isArray(row.members) ? row.members : [],
+    logoUrl: row.logo_url || undefined,
+    createdAt: row.created_at || new Date().toISOString()
+  };
+}
+
+// ==========================================
+// 8. تحويل طلبات التحقق والتوثيق (Verification Requests)
+// ==========================================
+export function mapVerificationRequestToSupabase(req: VerificationRequest): Record<string, any> {
+  return {
+    id: req.id,
+    request_type: req.requestType,
+    target_id: req.targetId,
+    target_name: req.targetName || null,
+    submitted_by: req.submittedBy,
+    submitted_by_phone: req.submittedByPhone || null,
+    documents: req.documents || [],
+    document_urls: (req.documents || []).map(d => d.url),
+    status: req.status || 'pending',
+    moderator_notes: req.moderatorNotes || null,
+    rejection_reason: req.rejectionReason || null,
+    reviewed_by: req.reviewedBy || null,
+    reviewed_at: req.reviewedAt || null
+  };
+}
+
+export function mapVerificationRequestFromSupabase(row: any): VerificationRequest {
+  return {
+    id: row.id,
+    requestType: row.request_type || 'individual_advertiser',
+    targetId: row.target_id || '',
+    targetName: row.target_name || '',
+    submittedBy: row.submitted_by || '',
+    submittedByPhone: row.submitted_by_phone || '',
+    status: row.status || 'pending',
+    documents: Array.isArray(row.documents) ? row.documents : [],
+    moderatorNotes: row.moderator_notes || undefined,
+    rejectionReason: row.rejection_reason || undefined,
+    reviewedBy: row.reviewed_by || undefined,
+    reviewedAt: row.reviewed_at || undefined,
+    createdAt: row.created_at || new Date().toISOString()
+  };
+}
+
+// ==========================================
+// 9. تحويل البلاغات والقضايا (Reports)
+// ==========================================
+export function mapReportToSupabase(report: ReportCase): Record<string, any> {
+  return {
+    id: report.id,
+    report_number: report.caseNumber || `REP-${Date.now()}`,
+    case_number: report.caseNumber || null,
+    reporter_id: 'usr-reporter',
+    reporter_name: report.reporterName || null,
+    reporter_phone: report.reporterPhone || null,
+    reporter_confidential_notes: report.reporterConfidentialNotes || null,
+    target_type: 'listing',
+    target_id: report.listingId || report.id,
+    listing_id: report.listingId || null,
+    listing_title: report.listingTitle || null,
+    listing_snapshot_price: report.listingSnapshotPrice || null,
+    listing_snapshot_advertiser: report.listingSnapshotAdvertiser || null,
+    reason: report.reason,
+    details: report.details || '',
+    evidence_urls: report.evidenceUrls || [],
+    priority: report.priority || 'medium',
+    status: report.status || 'new',
+    resolution_notes: report.resolutionReason || null,
+    resolution_reason: report.resolutionReason || null,
+    assigned_officer: report.assignedOfficer || null,
+    resolved_at: report.resolvedAt || null
+  };
+}
+
+export function mapReportFromSupabase(row: any): ReportCase {
+  return {
+    id: row.id,
+    caseNumber: row.case_number || row.report_number || `REP-${row.id}`,
+    listingId: row.listing_id || row.target_id || '',
+    listingTitle: row.listing_title || 'عقار محل بلاغ',
+    listingSnapshotPrice: row.listing_snapshot_price || '0',
+    listingSnapshotAdvertiser: row.listing_snapshot_advertiser || 'معلن',
+    reporterName: row.reporter_name || 'فاعل خير',
+    reporterPhone: row.reporter_phone || '',
+    reporterConfidentialNotes: row.reporter_confidential_notes || undefined,
+    reason: row.reason || 'false_information',
+    details: row.details || '',
+    evidenceUrls: Array.isArray(row.evidence_urls) ? row.evidence_urls : [],
+    priority: row.priority || 'medium',
+    status: row.status || 'new',
+    resolutionReason: row.resolution_notes || row.resolution_reason || undefined,
+    assignedOfficer: row.assigned_officer || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    resolvedAt: row.resolved_at || undefined
+  };
+}
+
+// ==========================================
+// 10. تحويل تذاكر الدعم الفني (Support Tickets)
+// ==========================================
+export function mapSupportTicketToSupabase(ticket: SupportTicket): Record<string, any> {
+  return {
+    id: ticket.id,
+    ticket_number: ticket.ticketNumber,
+    user_id: ticket.userId,
+    user_name: ticket.userName || null,
+    user_phone: ticket.userPhone || null,
+    subject: ticket.subject,
+    category: ticket.category || 'inquiry',
+    priority: ticket.priority || 'medium',
+    status: ticket.status || 'open',
+    messages: ticket.messages || [],
+    updated_at: new Date().toISOString()
+  };
+}
+
+export function mapSupportTicketFromSupabase(row: any): SupportTicket {
+  return {
+    id: row.id,
+    ticketNumber: row.ticket_number || `TKT-${row.id}`,
+    userId: row.user_id,
+    userName: row.user_name || 'مستخدم',
+    userPhone: row.user_phone || '',
+    subject: row.subject || 'استفسار',
+    category: row.category || 'inquiry',
+    priority: row.priority || 'medium',
+    status: row.status || 'open',
+    messages: Array.isArray(row.messages) ? row.messages : [],
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString()
+  };
+}
+

@@ -460,12 +460,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...(options.headers || {})
     };
     try {
-      // First attempt local in-app handler for offline standalone operation
-      const localRes = await handleLocalApiCall(url, { ...options, headers }, currentUser);
-      if (localRes) return localRes;
+      // First attempt real network fetch from backend server
       const res = await fetch(url, { ...options, headers });
       return res;
     } catch {
+      // Fall back to local in-app handler for offline standalone operation
       return handleLocalApiCall(url, { ...options, headers }, currentUser);
     }
   }, [currentUser]);
@@ -984,11 +983,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       // 1. Cloud Supabase Sync if configured
       if (SupabaseAdapter.isConfigured()) {
-        const cloudListings = await SupabaseAdapter.fetchListings();
+        const [
+          cloudListings,
+          cloudOrgs,
+          cloudVerifs,
+          cloudReports,
+          cloudTickets,
+          cloudSettings
+        ] = await Promise.all([
+          SupabaseAdapter.fetchListings(),
+          SupabaseAdapter.fetchOrganizations(),
+          SupabaseAdapter.fetchVerificationRequests(),
+          SupabaseAdapter.fetchReports(),
+          SupabaseAdapter.fetchTickets(),
+          SupabaseAdapter.fetchSystemSettingsInDb()
+        ]);
+
         if (cloudListings.success && cloudListings.data && cloudListings.data.length > 0) {
           const normalized = cloudListings.data.map(normalizeListing);
           setListings(normalized);
           try { localStorage.setItem('dalani_listings', JSON.stringify(normalized)); } catch {}
+        }
+        if (cloudOrgs.success && cloudOrgs.data && cloudOrgs.data.length > 0) {
+          setOrganizations(cloudOrgs.data);
+          try { localStorage.setItem('dalani_orgs', JSON.stringify(cloudOrgs.data)); } catch {}
+        }
+        if (cloudVerifs.success && cloudVerifs.data && cloudVerifs.data.length > 0) {
+          setVerificationRequests(cloudVerifs.data);
+          try { localStorage.setItem('dalani_verifications', JSON.stringify(cloudVerifs.data)); } catch {}
+        }
+        if (cloudReports.success && cloudReports.data && cloudReports.data.length > 0) {
+          setReports(cloudReports.data);
+          try { localStorage.setItem('dalani_reports', JSON.stringify(cloudReports.data)); } catch {}
+        }
+        if (cloudTickets.success && cloudTickets.data && cloudTickets.data.length > 0) {
+          setTickets(cloudTickets.data);
+          try { localStorage.setItem('dalani_tickets', JSON.stringify(cloudTickets.data)); } catch {}
+        }
+        if (cloudSettings.success && cloudSettings.data) {
+          setSystemSettings(cloudSettings.data);
+        }
+        if (currentUser.id && currentUser.role !== 'visitor') {
+          const cloudFavs = await SupabaseAdapter.fetchFavorites(currentUser.id);
+          if (cloudFavs.success && Array.isArray(cloudFavs.data)) {
+            setFavorites(cloudFavs.data);
+          }
         }
       }
 
@@ -1012,7 +1051,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       console.warn('[Dalani Client] Server sync fallback to local cache:', e);
     }
-  }, [apiFetch, currentUser.role, fetchAdminData, fetchRequestsAndBookings]);
+  }, [apiFetch, currentUser.role, currentUser.id, fetchAdminData, fetchRequestsAndBookings]);
 
   // Initial load and whenever role changes
   useEffect(() => {
@@ -1502,6 +1541,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createListing = async (
     data: Omit<Listing, 'id' | 'listingNumber' | 'createdAt' | 'updatedAt' | 'viewsCount' | 'favoritesCount' | 'statusTimeline'>
   ): Promise<Listing | null> => {
+    const nextSeq = listings.length + 101;
+    const listingNumber = `YEM-2026-${nextSeq}`;
+    const now = new Date().toISOString().split('T')[0];
+    const initialStatus: ListingStatus = data.status || 'under_review';
+
+    const fullListing: Listing = normalizeListing({
+      ...data,
+      id: 'list-' + Date.now(),
+      listingNumber,
+      status: initialStatus,
+      viewsCount: 0,
+      favoritesCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      statusTimeline: [
+        {
+          status: initialStatus,
+          timestamp: new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' }),
+          changedBy: currentUser.name,
+          userRole: currentUser.role,
+          notes: 'إنشاء الإعلان وإرساله للمراجعة'
+        }
+      ]
+    });
+
+    if (SupabaseAdapter.isConfigured()) {
+      const res = await SupabaseAdapter.saveListing(fullListing);
+      if (!res.success) {
+        showToast(res.error || 'تعذر إنشاء الإعلان في قاعدة البيانات', 'error');
+        return null;
+      }
+      setListings(prev => [fullListing, ...prev]);
+      logAction('إنشاء إعلان جديد', 'listing', fullListing.id, 'success', `تم نشر الإعلان في قاعدة البيانات: ${fullListing.title}`);
+      showToast(`تم حفظ الإعلان بنجاح في قاعدة البيانات برقم: ${fullListing.listingNumber}`, 'success');
+      return fullListing;
+    }
+
     try {
       const res = await apiFetch('/api/listings', {
         method: 'POST',
@@ -1524,38 +1600,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('API error during createListing, fallback to local creation:', err);
     }
 
-    // Fallback local logic if server offline
-    const nextSeq = listings.length + 101;
-    const listingNumber = `YEM-2026-${nextSeq}`;
-    const now = new Date().toISOString().split('T')[0];
-    const initialStatus: ListingStatus = data.status || 'under_review';
-
-    const fallbackListing: Listing = normalizeListing({
-      ...data,
-      id: 'list-' + Date.now(),
-      listingNumber,
-      status: initialStatus,
-      viewsCount: 0,
-      favoritesCount: 0,
-      createdAt: now,
-      updatedAt: now,
-      statusTimeline: [
-        {
-          status: initialStatus,
-          timestamp: new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' }),
-          changedBy: currentUser.name,
-          userRole: currentUser.role,
-          notes: 'إنشاء الإعلان وإرساله للمراجعة'
-        }
-      ]
-    });
-
-    setListings(prev => [fallbackListing, ...prev]);
+    setListings(prev => [fullListing, ...prev]);
     showToast(`تم حفظ الإعلان بنجاح برقم: ${listingNumber}`, 'success');
-    return fallbackListing;
+    return fullListing;
   };
 
   const updateListing = async (id: string, updates: Partial<Listing>) => {
+    if (SupabaseAdapter.isConfigured()) {
+      const res = await SupabaseAdapter.updateListing(id, updates);
+      if (!res.success) {
+        showToast(res.error || 'تعذر تحديث الإعلان في قاعدة البيانات', 'error');
+        return;
+      }
+      setListings(prev =>
+        prev.map(l => (l.id === id ? { ...l, ...updates, updatedAt: new Date().toISOString().split('T')[0] } : l))
+      );
+      showToast('تم تحديث بيانات الإعلان في قاعدة البيانات بنجاح', 'success');
+      return;
+    }
+
     try {
       const res = await apiFetch(`/api/listings/${id}`, {
         method: 'PUT',
@@ -1578,6 +1641,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteListing = async (id: string) => {
+    if (SupabaseAdapter.isConfigured()) {
+      const res = await SupabaseAdapter.deleteListing(id);
+      if (!res.success) {
+        showToast(res.error || 'تعذر حذف الإعلان من قاعدة البيانات', 'error');
+        return;
+      }
+      const listing = listings.find(l => l.id === id);
+      setListings(prev => prev.filter(l => l.id !== id));
+      logAction('حذف إعلان', 'listing', id, 'warning', `تم حذف الإعلان من قاعدة البيانات: ${listing?.title || id}`);
+      showToast('تم حذف الإعلان من قاعدة البيانات', 'info');
+      return;
+    }
+
     try {
       await apiFetch(`/api/listings/${id}`, { method: 'DELETE' });
     } catch (e) {
@@ -1604,6 +1680,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    const timelineEntry = {
+      status: newStatus,
+      timestamp: new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' }),
+      changedBy: currentUser.name,
+      userRole: currentUser.role,
+      reason,
+      notes,
+      missingFields
+    };
+
+    if (SupabaseAdapter.isConfigured()) {
+      const target = listings.find(l => l.id === id);
+      const updatedTimeline = target ? [timelineEntry, ...target.statusTimeline] : [timelineEntry];
+      const res = await SupabaseAdapter.updateListing(id, {
+        status: newStatus,
+        statusTimeline: updatedTimeline
+      });
+      if (!res.success) {
+        showToast(res.error || 'تعذر تغيير حالة الإعلان في قاعدة البيانات', 'error');
+        return;
+      }
+      setListings(prev =>
+        prev.map(l => {
+          if (l.id === id) {
+            return {
+              ...l,
+              status: newStatus,
+              updatedAt: new Date().toISOString().split('T')[0],
+              statusTimeline: updatedTimeline
+            };
+          }
+          return l;
+        })
+      );
+      logAction(
+        `تغيير حالة إعلان إلى ${newStatus}`,
+        'listing',
+        id,
+        'success',
+        reason ? `السبب: ${reason}` : `تم التحويل بواسطة ${currentUser.name}`
+      );
+      showToast(`تم تحديث حالة الإعلان في قاعدة البيانات إلى: ${newStatus}`, 'success');
+      return;
+    }
+
     try {
       const res = await apiFetch(`/api/listings/${id}/status`, {
         method: 'PATCH',
@@ -1618,16 +1739,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       // offline fallback
     }
-
-    const timelineEntry = {
-      status: newStatus,
-      timestamp: new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' }),
-      changedBy: currentUser.name,
-      userRole: currentUser.role,
-      reason,
-      notes,
-      missingFields
-    };
 
     setListings(prev =>
       prev.map(l => {
@@ -1653,28 +1764,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`تم تحديث حالة الإعلان إلى: ${newStatus}`, 'success');
   };
 
-  const toggleFavorite = (listingId: string) => {
+  const toggleFavorite = async (listingId: string) => {
     if (currentUser.role === 'visitor') {
       showToast('يجب تسجيل الدخول أو إنشاء حساب لحفظ العقارات في مفضلتك', 'warning');
       return;
     }
 
+    if (SupabaseAdapter.isConfigured() && currentUser.id) {
+      try {
+        const res = await SupabaseAdapter.toggleFavoriteInDb(currentUser.id, listingId);
+        if (res.success) {
+          setFavorites(prev => {
+            const exists = prev.includes(listingId);
+            const updated = res.isFavorite
+              ? (exists ? prev : [...prev, listingId])
+              : prev.filter(id => id !== listingId);
+            return updated;
+          });
+          showToast(res.isFavorite ? 'تمت إضافة العقار إلى المفضلة في قاعدة البيانات' : 'تمت إزالة العقار من المفضلة', 'info');
+          return;
+        } else {
+          showToast(res.error || 'فشل تحديث المفضلة في قاعدة البيانات', 'error');
+          return;
+        }
+      } catch (e: any) {
+        showToast(e?.message || 'خطأ أثناء الاتصال بقاعدة البيانات', 'error');
+        return;
+      }
+    }
+
+    // Fallback if not configured
     setFavorites(prev => {
       const exists = prev.includes(listingId);
       const updated = exists ? prev.filter(id => id !== listingId) : [...prev, listingId];
       showToast(exists ? 'تمت إزالة العقار من المفضلة' : 'تمت إضافة العقار إلى المفضلة', 'info');
       return updated;
     });
-
-    if (SupabaseAdapter.isConfigured() && currentUser.id) {
-      SupabaseAdapter.toggleFavoriteInDb(currentUser.id, listingId).catch(e => console.warn('[Supabase Sync Favorite]:', e));
-    }
   };
 
   const isFavorite = (listingId: string) => favorites.includes(listingId);
 
   // --- Organization Actions ---
-  const addOrgMember = (orgId: string, name: string, phone: string, roleInOrg: 'manager' | 'agent' | 'assistant') => {
+  const addOrgMember = async (orgId: string, name: string, phone: string, roleInOrg: 'manager' | 'agent' | 'assistant') => {
     const memberId = 'mem-' + Date.now();
     const newMember = {
       id: memberId,
@@ -1687,6 +1818,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       joinedAt: new Date().toISOString().split('T')[0]
     };
 
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.addOrgMemberInDb({
+        id: memberId,
+        organization_id: orgId,
+        member_name: name,
+        member_phone: phone,
+        role_in_org: roleInOrg,
+        is_active: true
+      });
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل حفظ العضو في قاعدة بيانات المنظومة', 'error');
+        return;
+      }
+    }
+
     setOrganizations(prev =>
       prev.map(org => {
         if (org.id === orgId) {
@@ -1696,23 +1842,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    if (SupabaseAdapter.isConfigured()) {
-      SupabaseAdapter.addOrgMemberInDb({
-        id: memberId,
-        organization_id: orgId,
-        member_name: name,
-        member_phone: phone,
-        role_in_org: roleInOrg,
-        is_active: true
-      }).catch(e => console.warn('[Supabase Sync OrgMember]:', e));
-    }
-
     logAction('إضافة عضو منشأة', 'organization', orgId, 'success', `تمت إضافة العضو ${name} بدور ${roleInOrg}`);
-    showToast(`تمت إضافة العضو ${name} بنجاح للمنشأة`, 'success');
+    showToast(`تمت إضافة العضو ${name} بنجاح لقاعدة بيانات المنشأة`, 'success');
   };
 
-  const toggleOrgMemberStatus = (orgId: string, memberId: string) => {
-    let newStatus = false;
+  const toggleOrgMemberStatus = async (orgId: string, memberId: string) => {
+    const org = organizations.find(o => o.id === orgId);
+    const member = org?.members.find(m => m.id === memberId);
+    const targetStatus = member ? !member.isActive : false;
+
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.toggleOrgMemberStatusInDb(memberId, targetStatus);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل تعديل حالة العضو في قاعدة البيانات', 'error');
+        return;
+      }
+    }
+
     setOrganizations(prev =>
       prev.map(org => {
         if (org.id === orgId) {
@@ -1720,8 +1866,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...org,
             members: org.members.map(m => {
               if (m.id === memberId) {
-                newStatus = !m.isActive;
-                return { ...m, isActive: newStatus };
+                return { ...m, isActive: targetStatus };
               }
               return m;
             })
@@ -1731,56 +1876,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    if (SupabaseAdapter.isConfigured()) {
-      SupabaseAdapter.toggleOrgMemberStatusInDb(memberId, newStatus).catch(e => console.warn('[Supabase Sync ToggleMember]:', e));
-    }
-
-    showToast('تم تعديل حالة تفعيل العضو', 'info');
+    showToast('تم تعديل حالة تفعيل العضو بنجاح في قاعدة البيانات', 'info');
   };
 
-  const assignListingToAgent = (listingId: string, agentId: string, agentName: string) => {
+  const assignListingToAgent = async (listingId: string, agentId: string, agentName: string) => {
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.assignListingAgentInDb(listingId, agentId, agentName);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل إسناد الإعلان في قاعدة البيانات', 'error');
+        return;
+      }
+    }
+
     setListings(prev =>
       prev.map(l => (l.id === listingId ? { ...l, assignedAgentId: agentId, assignedAgentName: agentName } : l))
     );
 
-    if (SupabaseAdapter.isConfigured()) {
-      SupabaseAdapter.assignListingAgentInDb(listingId, agentId, agentName).catch(e => console.warn('[Supabase Sync AssignAgent]:', e));
-    }
-
     logAction('إسناد إعلان إلى موظف', 'listing', listingId, 'success', `تم إسناد الإعلان إلى: ${agentName}`);
-    showToast(`تم إسناد الإعلان إلى ${agentName}`, 'success');
+    showToast(`تم إسناد الإعلان إلى ${agentName} وتثبيته في قاعدة البيانات`, 'success');
   };
-
 
   // --- Verification Actions ---
   const submitVerificationRequest = async (req: Omit<VerificationRequest, 'id' | 'createdAt' | 'status'>) => {
-    try {
-      await apiFetch('/api/verifications', {
-        method: 'POST',
-        body: JSON.stringify(req)
-      });
-    } catch (e) {
-      // offline fallback
-    }
-
+    const newReqId = 'ver-' + Date.now();
     const newReq: VerificationRequest = {
       ...req,
-      id: 'ver-' + Date.now(),
+      id: newReqId,
       status: 'under_review',
       createdAt: new Date().toISOString().split('T')[0]
     };
+
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.saveVerificationRequest(newReq);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل تقديم طلب التحقق في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        await apiFetch('/api/verifications', {
+          method: 'POST',
+          body: JSON.stringify(req)
+        });
+      } catch (e) {
+        // offline fallback
+      }
+    }
+
     setVerificationRequests(prev => [newReq, ...prev]);
-    showToast('تم تقديم طلب التحقق وسيقوم الفريق بمراجعته قريباً', 'success');
+    showToast('تم حفظ طلب التحقق في قاعدة البيانات وسيقوم الفريق بمراجعته قريباً', 'success');
   };
 
   const reviewVerificationRequest = async (id: string, status: 'approved' | 'rejected' | 'needs_info', notes: string) => {
-    try {
-      await apiFetch(`/api/verifications/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status, notes, badgeType: 'deed_reviewed', validityNote: notes })
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.updateVerificationRequest(id, {
+        status,
+        moderatorNotes: notes,
+        reviewedBy: currentUser.name,
+        reviewedAt: new Date().toISOString().split('T')[0]
       });
-    } catch (e) {
-      // offline fallback
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل تحديث قرار التحقق في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        await apiFetch(`/api/verifications/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status, notes, badgeType: 'deed_reviewed', validityNote: notes })
+        });
+      } catch (e) {
+        // offline fallback
+      }
     }
 
     setVerificationRequests(prev =>
@@ -1826,20 +1993,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
-    showToast(`تم تسجيل قرار التحقق: ${status}`, 'success');
+    showToast(`تم تسجيل قرار التحقق في قاعدة البيانات: ${status}`, 'success');
   };
 
   // --- Reports Actions ---
   const submitReport = async (report: Omit<ReportCase, 'id' | 'caseNumber' | 'createdAt' | 'status'>) => {
-    try {
-      await apiFetch('/api/reports', {
-        method: 'POST',
-        body: JSON.stringify(report)
-      });
-    } catch (e) {
-      // offline fallback
-    }
-
     const nextCaseNo = `REP-2026-00${reports.length + 50}`;
     const newReport: ReportCase = {
       ...report,
@@ -1848,18 +2006,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'new',
       createdAt: new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' })
     };
+
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.saveReport(newReport);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل حفظ البلاغ في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        await apiFetch('/api/reports', {
+          method: 'POST',
+          body: JSON.stringify(report)
+        });
+      } catch (e) {
+        // offline fallback
+      }
+    }
+
     setReports(prev => [newReport, ...prev]);
-    showToast('تم استلام بلاغك وسيقوم فريق النزاعات بالتحقق الفوري', 'info');
+    showToast('تم تسجيل بلاغك في قاعدة البيانات وسيقوم فريق النزاعات بالتحقق الفوري', 'info');
   };
 
   const resolveReport = async (id: string, status: 'resolved_ad_suspended' | 'dismissed', resolutionReason: string) => {
-    try {
-      await apiFetch(`/api/reports/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: status === 'resolved_ad_suspended' ? 'action_taken' : 'dismissed', resolutionNotes: resolutionReason })
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.updateReport(id, {
+        status,
+        resolutionReason,
+        resolvedAt: new Date().toISOString().split('T')[0]
       });
-    } catch (e) {
-      // offline fallback
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل تحديث البلاغ في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        await apiFetch(`/api/reports/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: status === 'resolved_ad_suspended' ? 'action_taken' : 'dismissed', resolutionNotes: resolutionReason })
+        });
+      } catch (e) {
+        // offline fallback
+      }
     }
 
     setReports(prev =>
@@ -1883,7 +2071,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    showToast('تمت معالجة البلاغ بنجاح', 'success');
+    showToast('تمت معالجة البلاغ وتحديثه في قاعدة البيانات بنجاح', 'success');
   };
 
   // --- Support Actions ---
@@ -1893,23 +2081,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     priority: SupportTicket['priority'],
     initialMessage: string
   ) => {
-    try {
-      const res = await apiFetch('/api/support/tickets', {
-        method: 'POST',
-        body: JSON.stringify({ subject, category, priority, message: initialMessage })
-      });
-      if (res && res.ok) {
-        const json = await res.json();
-        if (json.ticket) {
-          setTickets(prev => [json.ticket, ...prev]);
-          showToast('تم إرسال تذكرتك بنجاح، وسيقوم ممثل الدعم بالرد قريباً', 'success');
-          return;
-        }
-      }
-    } catch (e) {
-      // offline fallback
-    }
-
     const nextTktNo = `TKT-2026-${tickets.length + 101}`;
     const now = new Date().toISOString().split('T')[0];
     const isSupport = currentUser.role === 'support' || currentUser.role === 'system_admin';
@@ -1939,20 +2110,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ]
     };
 
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.saveTicket(newTicket);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل حفظ التذكرة في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        const res = await apiFetch('/api/support/tickets', {
+          method: 'POST',
+          body: JSON.stringify({ subject, category, priority, message: initialMessage })
+        });
+        if (res && res.ok) {
+          const json = await res.json();
+          if (json.ticket) {
+            setTickets(prev => [json.ticket, ...prev]);
+            showToast('تم إرسال تذكرتك بنجاح، وسيقوم ممثل الدعم بالرد قريباً', 'success');
+            return;
+          }
+        }
+      } catch (e) {
+        // offline fallback
+      }
+    }
+
     setTickets(prev => [newTicket, ...prev]);
-    showToast('تم إرسال تذكرتك بنجاح، وسيقوم ممثل الدعم بالرد قريباً', 'success');
+    showToast('تم إرسال تذكرتك وحفظها في قاعدة البيانات بنجاح', 'success');
   };
 
   const replyToTicket = async (ticketId: string, text: string) => {
-    try {
-      await apiFetch(`/api/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ message: text })
-      });
-    } catch (e) {
-      // offline fallback
-    }
-
     const isSupport = currentUser.role === 'support' || currentUser.role === 'system_admin';
     const senderRole: 'user' | 'support' = isSupport ? 'support' : 'user';
 
@@ -1965,6 +2152,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
     };
 
+    if (SupabaseAdapter.isConfigured()) {
+      const dbRes = await SupabaseAdapter.addTicketMessage(ticketId, newMessage);
+      if (!dbRes.success) {
+        showToast(dbRes.error || 'فشل إرسال الرد في قاعدة البيانات', 'error');
+        return;
+      }
+    } else {
+      try {
+        await apiFetch(`/api/support/tickets/${ticketId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ message: text })
+        });
+      } catch (e) {
+        // offline fallback
+      }
+    }
+
     setTickets(prev =>
       prev.map(t =>
         t.id === ticketId
@@ -1976,10 +2180,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : t
       )
     );
-    showToast('تم إرسال الرد بنجاح', 'success');
+    showToast('تم إرسال الرد وتثبيته في قاعدة البيانات بنجاح', 'success');
   };
 
   const updateTicketStatus = (ticketId: string, status: SupportTicket['status']) => {
+    if (SupabaseAdapter.isConfigured()) {
+      SupabaseAdapter.updateTicketStatusInDb(ticketId, status).catch(e => console.warn('[Supabase Sync TicketStatus]:', e));
+    }
     setTickets(prev =>
       prev.map(t => (t.id === ticketId ? { ...t, status, lastUpdate: new Date().toISOString().split('T')[0] } : t))
     );

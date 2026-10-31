@@ -78,7 +78,7 @@ async function runEndToEndVerification() {
     result: 'success',
     details: 'اختبار التدقيق والتكامل النهائي'
   });
-  console.log(`   - Audit Log Test Result: success=${auditRes.success}`);
+  console.log(`   - Audit Log Test Result: success=${auditRes.success}, error=${auditRes.error || 'none'}`);
 
   console.log('\n====================================================================');
   console.log('🎉 END-TO-END SUPABASE SYNC, PERSISTENCE & ISOLATION TESTS PASSED!');

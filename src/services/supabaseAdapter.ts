@@ -13,7 +13,12 @@ import {
   PropertyBooking,
   PropertyContract,
   AuditLogEntry,
-  User
+  User,
+  Organization,
+  VerificationRequest,
+  ReportCase,
+  SupportTicket,
+  SystemSettings
 } from '../types';
 import {
   mapListingToSupabase,
@@ -27,8 +32,17 @@ import {
   mapAuditLogToSupabase,
   mapAuditLogFromSupabase,
   mapUserToSupabase,
-  mapUserFromSupabase
+  mapUserFromSupabase,
+  mapOrganizationToSupabase,
+  mapOrganizationFromSupabase,
+  mapVerificationRequestToSupabase,
+  mapVerificationRequestFromSupabase,
+  mapReportToSupabase,
+  mapReportFromSupabase,
+  mapSupportTicketToSupabase,
+  mapSupportTicketFromSupabase
 } from './supabaseMappers';
+
 
 export class SupabaseAdapter {
   /**
@@ -615,19 +629,23 @@ export class SupabaseAdapter {
     if (!client) return { success: false, error: 'Supabase غير مهيأ' };
 
     try {
-      const { data: existing } = await client
+      const { data: existing, error: checkErr } = await client
         .from('user_favorites')
         .select('id')
         .eq('user_id', userId)
         .eq('listing_id', listingId)
         .maybeSingle();
 
+      if (checkErr) return { success: false, error: checkErr.message };
+
       if (existing) {
-        await client.from('user_favorites').delete().eq('id', existing.id);
+        const { error: delErr } = await client.from('user_favorites').delete().eq('id', existing.id);
+        if (delErr) return { success: false, error: delErr.message };
         return { success: true, isFavorite: false };
       } else {
         const id = `fav-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        await client.from('user_favorites').insert({ id, user_id: userId, listing_id: listingId });
+        const { error: insErr } = await client.from('user_favorites').insert({ id, user_id: userId, listing_id: listingId });
+        if (insErr) return { success: false, error: insErr.message };
         return { success: true, isFavorite: true };
       }
     } catch (err: any) {
@@ -892,6 +910,305 @@ export class SupabaseAdapter {
       return { success: false, error: err.message };
     }
   }
+
+  // ==========================================
+  // 11. المنشآت والمكاتب العقارية (Organizations)
+  // ==========================================
+
+  static async fetchOrganizations(): Promise<{ success: boolean; data?: Organization[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('organizations')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapOrganizationFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveOrganization(org: Organization): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapOrganizationToSupabase(org);
+      const { error } = await client
+        .from('organizations')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 12. طلبات التحقق والتوثيق (Verification Requests)
+  // ==========================================
+
+  static async fetchVerificationRequests(): Promise<{ success: boolean; data?: VerificationRequest[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('verification_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapVerificationRequestFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveVerificationRequest(req: VerificationRequest): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapVerificationRequestToSupabase(req);
+      const { error } = await client
+        .from('verification_requests')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateVerificationRequest(id: string, updates: Partial<VerificationRequest>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const dbUpdates: Record<string, any> = {};
+      if (updates.status) dbUpdates.status = updates.status;
+      if (updates.moderatorNotes !== undefined) dbUpdates.moderator_notes = updates.moderatorNotes;
+      if (updates.rejectionReason !== undefined) dbUpdates.rejection_reason = updates.rejectionReason;
+      if (updates.reviewedBy) dbUpdates.reviewed_by = updates.reviewedBy;
+      if (updates.reviewedAt) dbUpdates.reviewed_at = updates.reviewedAt;
+
+      const { error } = await client
+        .from('verification_requests')
+        .update(dbUpdates)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 13. البلاغات والقضايا (Reports)
+  // ==========================================
+
+  static async fetchReports(): Promise<{ success: boolean; data?: ReportCase[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('reports')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapReportFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveReport(report: ReportCase): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapReportToSupabase(report);
+      const { error } = await client
+        .from('reports')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateReport(id: string, updates: Partial<ReportCase>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const dbUpdates: Record<string, any> = {};
+      if (updates.status) dbUpdates.status = updates.status;
+      if (updates.resolutionReason !== undefined) {
+        dbUpdates.resolution_notes = updates.resolutionReason;
+        dbUpdates.resolution_reason = updates.resolutionReason;
+      }
+      if (updates.assignedOfficer) dbUpdates.assigned_officer = updates.assignedOfficer;
+      if (updates.resolvedAt) dbUpdates.resolved_at = updates.resolvedAt;
+
+      const { error } = await client
+        .from('reports')
+        .update(dbUpdates)
+        .eq('id', id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 14. تذاكر الدعم الفني (Support Tickets)
+  // ==========================================
+
+  static async fetchTickets(): Promise<{ success: boolean; data?: SupportTicket[]; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('support_tickets')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: (data || []).map(mapSupportTicketFromSupabase) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveTicket(ticket: SupportTicket): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const payload = mapSupportTicketToSupabase(ticket);
+      const { error } = await client
+        .from('support_tickets')
+        .upsert(payload, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async addTicketMessage(ticketId: string, message: any): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: ticket, error: fetchErr } = await client
+        .from('support_tickets')
+        .select('messages')
+        .eq('id', ticketId)
+        .maybeSingle();
+
+      if (fetchErr || !ticket) return { success: false, error: fetchErr?.message || 'التذكرة غير موجودة' };
+
+      const currentMessages = Array.isArray(ticket.messages) ? ticket.messages : [];
+      const updatedMessages = [...currentMessages, message];
+
+      const { error } = await client
+        .from('support_tickets')
+        .update({ messages: updatedMessages, updated_at: new Date().toISOString() })
+        .eq('id', ticketId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async updateTicketStatusInDb(ticketId: string, status: string): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { error } = await client
+        .from('support_tickets')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', ticketId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ==========================================
+  // 15. إعدادات النظام (System Settings)
+  // ==========================================
+
+  static async fetchSystemSettingsInDb(): Promise<{ success: boolean; data?: SystemSettings; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data, error } = await client
+        .from('system_settings')
+        .select('*')
+        .eq('id', 'global')
+        .maybeSingle();
+
+      if (error) return { success: false, error: error.message };
+      if (!data) return { success: false, error: 'لا توجد إعدادات عامة' };
+      return { success: true, data: data.settings };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async saveSystemSettingsInDb(settings: Partial<SystemSettings>): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Supabase غير مهيأ' };
+
+    try {
+      const { data: existing } = await client
+        .from('system_settings')
+        .select('settings')
+        .eq('id', 'global')
+        .maybeSingle();
+
+      const merged = { ...(existing?.settings || {}), ...settings };
+
+      const { error } = await client
+        .from('system_settings')
+        .upsert({
+          id: 'global',
+          settings: merged,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'id' });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
 }
+
 
 
