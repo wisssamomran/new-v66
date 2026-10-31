@@ -277,13 +277,15 @@ export const BookingsManagementPage: React.FC<BookingsManagementPageProps> = ({
   const currentRequestsList = activeTab === 'seeker' ? seekerRequests : advertiserRequests;
 
   const filteredRequests = currentRequestsList.filter(req => {
-    const linkedBooking = req.bookingId ? bookings.find(b => b.id === req.bookingId) : undefined;
-    const bookingStatus = linkedBooking?.status;
+    const linkedBooking = req.bookingId
+      ? bookings.find(b => b.id === req.bookingId)
+      : bookings.find(b => b.requestId === req.id || b.listingId === req.listingId);
+    const bookingStatus = linkedBooking?.status || (req.status === 'accepted' ? 'active' : undefined);
 
     // Filter by status tab
     if (statusFilter === 'pending' && req.status !== 'pending') return false;
-    if (statusFilter === 'active' && (!linkedBooking || bookingStatus !== 'active')) return false;
-    if (statusFilter === 'completed' && (!linkedBooking || bookingStatus !== 'completed')) return false;
+    if (statusFilter === 'active' && !(req.status === 'accepted' || bookingStatus === 'active')) return false;
+    if (statusFilter === 'completed' && !(linkedBooking && linkedBooking.status === 'completed')) return false;
     if (statusFilter === 'cancelled_or_rejected') {
       const isReqCancelled = req.status === 'cancelled' || req.status === 'rejected';
       const isBkgCancelled = linkedBooking && (bookingStatus === 'cancelled' || bookingStatus === 'expired');
@@ -666,7 +668,35 @@ export const BookingsManagementPage: React.FC<BookingsManagementPageProps> = ({
           </div>
         ) : (
           filteredRequests.map(req => {
-            const linkedBooking = req.bookingId ? bookings.find(b => b.id === req.bookingId) : bookings.find(b => b.requestId === req.id);
+            let linkedBooking = req.bookingId
+              ? bookings.find(b => b.id === req.bookingId)
+              : bookings.find(b => b.requestId === req.id || b.listingId === req.listingId);
+
+            if (!linkedBooking && req.status === 'accepted') {
+              linkedBooking = {
+                id: req.bookingId || `bkg-${req.id}`,
+                bookingNumber: `BKG-2026-${(req.requestNumber || '1001').replace(/REQ-2026-?/g, '')}`,
+                requestId: req.id,
+                listingId: req.listingId,
+                listingTitle: req.listingTitle,
+                listingNumber: req.listingNumber,
+                listingPrice: req.listingPrice,
+                listingCurrency: req.listingCurrency,
+                seekerId: req.seekerId,
+                seekerName: req.seekerName,
+                seekerPhone: req.seekerPhone,
+                advertiserId: req.advertiserId,
+                advertiserName: req.advertiserName,
+                advertiserPhone: req.advertiserPhone,
+                status: 'active',
+                durationHours: req.requestedDurationHours || 24,
+                startDate: req.createdAt,
+                expiresAt: new Date(new Date(req.createdAt).getTime() + (req.requestedDurationHours || 24) * 3600 * 1000).toISOString(),
+                confirmedBy: req.advertiserName || 'المعلن المسؤول',
+                createdAt: req.createdAt,
+                updatedAt: req.updatedAt || req.createdAt
+              };
+            }
             const linkedContract = linkedBooking
               ? contracts.find(c => c.bookingId === linkedBooking.id || c.id === linkedBooking.contractId)
               : contracts.find(c => c.requestId === req.id || c.listingId === req.listingId);
