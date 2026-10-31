@@ -122,7 +122,8 @@ export const DalaniAiAssistantModal: React.FC<DalaniAiAssistantModalProps> = ({
           body: JSON.stringify({ currentView })
         });
 
-        if (!res.ok) throw new Error('Greet API failed');
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) throw new Error('Greet API failed');
         const data = await res.json();
 
         if (isMounted && data.success && data.greeting) {

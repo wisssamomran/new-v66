@@ -164,7 +164,8 @@ export const MyAccountPage: React.FC<MyAccountPageProps> = ({
           'Authorization': `Bearer ${currentUser.id}`
         }
       });
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setPersonalLogs(data.logs || []);
       }
@@ -186,7 +187,8 @@ export const MyAccountPage: React.FC<MyAccountPageProps> = ({
           'Authorization': `Bearer ${currentUser.id}`
         }
       });
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setUserSessions(data.sessions || []);
       }

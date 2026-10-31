@@ -462,6 +462,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       // First attempt real network fetch from backend server
       const res = await fetch(url, { ...options, headers });
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || contentType.includes('text/html')) {
+        return handleLocalApiCall(url, { ...options, headers }, currentUser);
+      }
       return res;
     } catch {
       // Fall back to local in-app handler for offline standalone operation
