@@ -1,31 +1,51 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
-import { Navbar } from './components/Navbar';
-import { Footer } from './components/Footer';
-import { BottomNavBar } from './components/BottomNavBar';
-import { AuthModal } from './components/AuthModal';
-import { VisitorGateModal } from './components/VisitorGateModal';
-import { ProtectedRoute } from './components/ProtectedRoute';
-import { HomePage } from './pages/HomePage';
-import { SearchPage } from './pages/SearchPage';
-import { ListingDetailsPage } from './pages/ListingDetailsPage';
-import { AdWizardPage } from './pages/AdWizardPage';
-import { MyAdsPage } from './pages/MyAdsPage';
-import { ModerationPage } from './pages/ModerationPage';
-import { VerificationPage } from './pages/VerificationPage';
-import { OrgDashboardPage } from './pages/OrgDashboardPage';
-import { ReportsPage } from './pages/ReportsPage';
-import { SupportPage } from './pages/SupportPage';
-import { AdminDashboardPage } from './pages/AdminDashboardPage';
-import { HelpAndPoliciesPage } from './pages/HelpAndPoliciesPage';
-import { FavoritesPage } from './pages/FavoritesPage';
-import { MyAccountPage } from './pages/MyAccountPage';
-import { BookingsManagementPage } from './pages/BookingsManagementPage';
-import { DalaniAiAssistantModal } from './components/DalaniAiAssistantModal';
-import { AppPermissionsModal } from './components/AppPermissionsModal';
-import { SupabaseConnectionModal } from './components/SupabaseConnectionModal';
 import { Listing } from './types';
 import { CheckCircle2, AlertCircle, Info, XCircle } from 'lucide-react';
+
+// Subsystem 1: Identity & Parties Management
+import {
+  MyAccountPage,
+  OrgDashboardPage,
+  AuthModal,
+  VisitorGateModal,
+  AppPermissionsModal
+} from './modules/identity-parties';
+
+// Subsystem 2: Property Assets Management
+import { VerificationPage } from './modules/property-assets';
+
+// Subsystem 3: Real Estate Marketplace
+import {
+  HomePage,
+  SearchPage,
+  ListingDetailsPage,
+  AdWizardPage,
+  MyAdsPage,
+  FavoritesPage
+} from './modules/marketplace';
+
+// Subsystem 4: Real Estate Operations & Transactions
+import { BookingsManagementPage } from './modules/real-estate-operations';
+
+// Subsystem 6: Platform Administration & Governance
+import {
+  AdminDashboardPage,
+  ModerationPage,
+  ReportsPage,
+  SupportPage,
+  HelpAndPoliciesPage
+} from './modules/platform-governance';
+
+// Shared Platform Services & Common UI
+import {
+  Navbar,
+  Footer,
+  BottomNavBar,
+  ProtectedRoute,
+  DalaniAiAssistantModal,
+  SupabaseConnectionModal
+} from './modules/shared';
 
 const AppContent: React.FC = () => {
   const { listings, currentUser, toasts, removeToast } = useApp();

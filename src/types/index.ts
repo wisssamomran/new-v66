@@ -382,13 +382,15 @@ export interface ElectronicSignatureRecord {
   partyRole: 'firstParty' | 'secondParty' | 'witness';
   signerId: string;
   signerName: string;
-  signerPhone: string;
+  signerPhone?: string;
   nationalIdOrPassport: string;
   idGovernorate?: string;
-  contractVersion: number;
+  contractVersion?: number;
+  signedVersion?: number;
   signedAt: string;
-  verificationCode: string;
+  verificationCode?: string;
   digitalFingerprint: string;
+  verificationMethod?: string;
   legalDisclaimerAcknowledged: boolean;
   ipAddress?: string;
 }
@@ -511,10 +513,11 @@ export interface ContractParty {
 
 export interface ContractClause {
   id: string;
-  number: number;
+  number?: number;
   title: string;
   content: string;
   isMandatory?: boolean;
+  category?: string;
 }
 
 export interface ContractVersion {
@@ -531,6 +534,7 @@ export interface ContractVersion {
     totalAmount: number;
     currency: Currency;
     depositAmount?: number;
+    depositCurrency?: Currency;
     paymentSchedule: string;
     lateFeeTerms?: string;
   };
@@ -597,6 +601,8 @@ export interface PropertyContract {
     endDate?: string;
     durationMonths?: number;
     renewalTerms?: string;
+    autoRenew?: boolean;
+    noticePeriodDays?: number;
     handoverDate?: string;
   };
 

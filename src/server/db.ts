@@ -3,6 +3,12 @@ import path from 'path';
 import crypto from 'crypto';
 import { db as pgDb, schema, checkPostgresConnection } from '../db';
 import { eq } from 'drizzle-orm';
+import { identityRepository } from './modules/identity/identityRepository';
+import { propertyAssetsRepository } from './modules/propertyAssets/propertyAssetsRepository';
+import { marketplaceRepository } from './modules/marketplace/marketplaceRepository';
+import { operationsRepository } from './modules/operations/operationsRepository';
+import { contractsRepository } from './modules/contracts/contractsRepository';
+import { governanceRepository } from './modules/governance/governanceRepository';
 import {
   Listing,
   Organization,
@@ -1641,158 +1647,86 @@ class LocalDatabase {
     }).catch(err => console.error('[PostgreSQL Sync] Audit log sync error:', err?.message || err));
   }
 
-  // --- Listings Operations ---
+  // --- Listings Operations (Delegated to Subsystem 3: Marketplace Repository) ---
   public getListings(): Listing[] {
-    this.checkBookingsExpiration();
-    return [...this.data.listings];
+    return marketplaceRepository.getListings();
   }
 
   public getListingById(id: string): Listing | undefined {
-    this.checkBookingsExpiration();
-    return this.data.listings.find(l => l.id === id);
+    return marketplaceRepository.getListingById(id);
   }
 
   public addListing(listing: Listing): Listing {
-    const normalized = normalizeListing(listing);
-    this.data.listings.unshift(normalized);
-    this.persist();
-    this.syncPgListing(normalized);
-    return normalized;
+    return marketplaceRepository.addListing(listing);
   }
 
   public updateListing(id: string, updates: Partial<Listing>): Listing | undefined {
-    const index = this.data.listings.findIndex(l => l.id === id);
-    if (index === -1) return undefined;
-    const existing = this.data.listings[index];
-
-    // REQUIREMENT 7: Sold or rented listings must NEVER be reset to active, published, or available!
-    if ((existing.status === 'completed' || existing.dealOutcome) && updates.status && updates.status !== 'completed') {
-      console.warn(`[Dalani Security] Prevented reopening completed/sold/rented listing ${existing.listingNumber}`);
-      delete updates.status;
-    }
-
-    const merged = {
-      ...existing,
-      ...updates,
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
-    this.data.listings[index] = normalizeListing(merged);
-    this.persist();
-    this.syncPgListing(this.data.listings[index]);
-    return this.data.listings[index];
+    return marketplaceRepository.updateListing(id, updates);
   }
 
   public deleteListing(id: string): boolean {
-    const prevLength = this.data.listings.length;
-    this.data.listings = this.data.listings.filter(l => l.id !== id);
-    if (this.data.listings.length !== prevLength) {
-      this.persist();
-      this.deletePgListing(id);
-      return true;
-    }
-    return false;
+    return marketplaceRepository.deleteListing(id);
   }
 
-  // --- Organizations Operations ---
+  // --- Organizations Operations (Delegated to IdentityRepository) ---
   public getOrganizations(): Organization[] {
-    return [...this.data.organizations];
+    return identityRepository.getOrganizations();
   }
 
   public getOrganizationById(id: string): Organization | undefined {
-    return this.data.organizations.find(o => o.id === id);
+    return identityRepository.getOrganizationById(id);
   }
 
   public updateOrganization(id: string, updates: Partial<Organization>): Organization | undefined {
-    const index = this.data.organizations.findIndex(o => o.id === id);
-    if (index === -1) return undefined;
-    this.data.organizations[index] = {
-      ...this.data.organizations[index],
-      ...updates
-    };
-    this.persist();
-    return this.data.organizations[index];
+    return identityRepository.updateOrganization(id, updates);
   }
 
-  // --- Verifications Operations ---
+  // --- Verifications Operations (Delegated to Subsystem 2: Property Assets Repository) ---
   public getVerifications(): VerificationRequest[] {
-    return [...this.data.verifications];
+    return propertyAssetsRepository.getVerifications();
   }
 
   public addVerification(req: VerificationRequest): VerificationRequest {
-    this.data.verifications.unshift(req);
-    this.persist();
-    return req;
+    return propertyAssetsRepository.addVerification(req);
   }
 
   public updateVerification(id: string, updates: Partial<VerificationRequest>): VerificationRequest | undefined {
-    const index = this.data.verifications.findIndex(v => v.id === id);
-    if (index === -1) return undefined;
-    this.data.verifications[index] = {
-      ...this.data.verifications[index],
-      ...updates
-    };
-    this.persist();
-    return this.data.verifications[index];
+    return propertyAssetsRepository.updateVerification(id, updates);
   }
 
-  // --- Reports Operations ---
+  // --- Reports Operations (Subsystem 6: Governance Repository) ---
   public getReports(): ReportCase[] {
-    return [...this.data.reports];
+    return governanceRepository.getReports();
   }
 
   public addReport(rep: ReportCase): ReportCase {
-    this.data.reports.unshift(rep);
-    this.persist();
-    return rep;
+    return governanceRepository.addReport(rep);
   }
 
   public updateReport(id: string, updates: Partial<ReportCase>): ReportCase | undefined {
-    const index = this.data.reports.findIndex(r => r.id === id);
-    if (index === -1) return undefined;
-    this.data.reports[index] = {
-      ...this.data.reports[index],
-      ...updates
-    };
-    this.persist();
-    return this.data.reports[index];
+    return governanceRepository.updateReport(id, updates);
   }
 
-  // --- Tickets Operations ---
+  // --- Tickets Operations (Subsystem 6: Governance Repository) ---
   public getTickets(): SupportTicket[] {
-    return [...this.data.tickets];
+    return governanceRepository.getTickets();
   }
 
   public addTicket(ticket: SupportTicket): SupportTicket {
-    this.data.tickets.unshift(ticket);
-    this.persist();
-    return ticket;
+    return governanceRepository.addTicket(ticket);
   }
 
   public updateTicket(id: string, updates: Partial<SupportTicket>): SupportTicket | undefined {
-    const index = this.data.tickets.findIndex(t => t.id === id);
-    if (index === -1) return undefined;
-    this.data.tickets[index] = {
-      ...this.data.tickets[index],
-      ...updates
-    };
-    this.persist();
-    return this.data.tickets[index];
+    return governanceRepository.updateTicket(id, updates);
   }
 
-  // --- Audit Logs (Append-Only, Tamper-Proof) ---
+  // --- Audit Logs (Subsystem 6: Governance Repository) ---
   public getAuditLogs(): AuditLogEntry[] {
-    return [...this.data.auditLogs];
+    return governanceRepository.getAuditLogs();
   }
 
   public addAuditLog(entry: AuditLogEntry): AuditLogEntry {
-    this.data.auditLogs.unshift(entry);
-    // Keep max 500 logs in active memory
-    if (this.data.auditLogs.length > 500) {
-      this.data.auditLogs = this.data.auditLogs.slice(0, 500);
-    }
-    this.persist();
-    this.syncPgAuditLog(entry);
-    return entry;
+    return governanceRepository.addAuditLog(entry);
   }
 
   public logAudit(entry: {
@@ -1806,505 +1740,175 @@ class LocalDatabase {
     details?: string;
     severity?: 'info' | 'warning' | 'error';
   }): AuditLogEntry {
-    return this.addAuditLog({
-      id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      timestamp: new Date().toISOString(),
-      userId: entry.actorId,
-      userName: entry.actorName,
-      userRole: entry.actorRole,
-      action: entry.action,
-      targetType: entry.targetType,
-      targetId: entry.targetId,
-      result: entry.severity === 'warning' ? 'warning' : 'success',
-      details: entry.details || '',
-      ipAddress: '127.0.0.1'
-    });
+    return governanceRepository.logAudit(entry);
   }
 
-  // --- Users Operations ---
+  // --- Users Operations (Delegated to IdentityRepository) ---
   public getUsers(): User[] {
-    return [...this.data.users];
+    return identityRepository.getUsers();
   }
 
   public getUserById(id: string): User | undefined {
-    return this.data.users.find(u => u.id === id);
+    return identityRepository.getUserById(id);
   }
 
   public getUserBySupabaseId(supabaseUserId: string): User | undefined {
-    return this.data.users.find(u => u.supabaseUserId === supabaseUserId);
+    return identityRepository.getUserBySupabaseId(supabaseUserId);
   }
 
   public getUserByEmailOrPhone(identifier: string): User | undefined {
-    const clean = identifier.trim().toLowerCase();
-    const cleanPhone = identifier.replace(/[\s\-\(\)\+]/g, '');
-    return this.data.users.find(u => {
-      if (u.email && u.email.toLowerCase() === clean) return true;
-      if (u.id === identifier) return true;
-      if (u.supabaseUserId === identifier) return true;
-      if (u.phone) {
-        const uPhoneClean = u.phone.replace(/[\s\-\(\)\+]/g, '');
-        if (uPhoneClean === cleanPhone) return true;
-        if (cleanPhone.length >= 7 && uPhoneClean.endsWith(cleanPhone)) return true;
-      }
-      return false;
-    });
+    return identityRepository.getUserByEmailOrPhone(identifier);
   }
 
   public updateUser(id: string, updates: Partial<User>): User | undefined {
-    const index = this.data.users.findIndex(u => u.id === id);
-    if (index === -1) return undefined;
-    this.data.users[index] = {
-      ...this.data.users[index],
-      ...updates
-    };
-    this.persist();
-    this.syncPgUser(this.data.users[index]);
-    return this.data.users[index];
+    return identityRepository.updateUser(id, updates);
   }
 
   public toggleUserStatus(id: string): User | undefined {
-    const index = this.data.users.findIndex(u => u.id === id);
-    if (index === -1) return undefined;
-    this.data.users[index].activeStatus = !this.data.users[index].activeStatus;
-    this.persist();
-    return this.data.users[index];
+    return identityRepository.toggleUserStatus(id);
   }
 
-  // --- Staff Operations ---
+  // --- Staff Operations (Subsystem 6: Governance Repository) ---
   public getStaff(): StaffMember[] {
-    return [...this.data.staff];
+    return governanceRepository.getStaff();
   }
 
   public getStaffById(id: string): StaffMember | undefined {
-    return this.data.staff.find(s => s.id === id);
+    return governanceRepository.getStaffById(id);
   }
 
   public addStaff(member: Omit<StaffMember, 'id' | 'createdAt'>): StaffMember {
-    const newStaff: StaffMember = {
-      ...member,
-      id: `stf-${Date.now()}`,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    this.data.staff.unshift(newStaff);
-
-    // Also sync or create user in users array if doesn't exist
-    const existingUser = this.data.users.find(u => u.phone === member.phone || u.id === member.userId);
-    if (existingUser) {
-      existingUser.role = member.role;
-      existingUser.activeStatus = member.activeStatus ?? true;
-    } else {
-      this.data.users.push({
-        id: member.userId || `usr-${Date.now()}`,
-        name: member.name,
-        phone: member.phone,
-        phoneVerified: true,
-        role: member.role,
-        activeStatus: member.activeStatus ?? true,
-        createdAt: newStaff.createdAt
-      });
-    }
-
-    this.persist();
-    return newStaff;
+    return governanceRepository.addStaff(member);
   }
 
   public toggleStaffStatus(id: string): StaffMember | undefined {
-    const index = this.data.staff.findIndex(s => s.id === id);
-    if (index === -1) return undefined;
-    this.data.staff[index].activeStatus = !this.data.staff[index].activeStatus;
-    // Sync with users array
-    const user = this.data.users.find(u => u.id === this.data.staff[index].userId || u.name === this.data.staff[index].name);
-    if (user) {
-      user.activeStatus = this.data.staff[index].activeStatus;
-    }
-    this.persist();
-    return this.data.staff[index];
+    return governanceRepository.toggleStaffStatus(id);
   }
 
   public updateStaffPermissions(id: string, permissions: string[]): StaffMember | undefined {
-    const index = this.data.staff.findIndex(s => s.id === id);
-    if (index === -1) return undefined;
-    this.data.staff[index].permissions = permissions;
-    this.persist();
-    return this.data.staff[index];
+    return governanceRepository.updateStaffPermissions(id, permissions);
   }
 
-  // --- Roles Matrix Operations ---
+  // --- Roles Matrix Operations (Subsystem 6: Governance Repository) ---
   public getRolesMatrix(): Record<string, string[]> {
-    return { ...this.data.rolesMatrix };
+    return governanceRepository.getRolesMatrix();
   }
 
   public updateRolesMatrix(matrix: Record<string, string[]>): Record<string, string[]> {
-    this.data.rolesMatrix = {
-      ...this.data.rolesMatrix,
-      ...matrix
-    };
-    this.persist();
-    return this.data.rolesMatrix;
+    return governanceRepository.updateRolesMatrix(matrix);
   }
 
-  // --- Active Sessions Operations ---
+  // --- Active Sessions Operations (Subsystem 6: Governance Repository) ---
   public getActiveSessions(): ActiveSession[] {
-    return [...this.data.activeSessions];
+    return governanceRepository.getActiveSessions();
   }
 
   public addActiveSession(session: Omit<ActiveSession, 'id'>): ActiveSession {
-    const newSession: ActiveSession = {
-      ...session,
-      id: `ses-${Date.now()}`
-    };
-    this.data.activeSessions.unshift(newSession);
-    this.persist();
-    return newSession;
+    return governanceRepository.addActiveSession(session);
   }
 
   public terminateSession(sessionIdOrId: string): boolean {
-    const initialLen = this.data.activeSessions.length;
-    this.data.activeSessions = this.data.activeSessions.filter(
-      s => s.id !== sessionIdOrId && s.sessionId !== sessionIdOrId
-    );
-    if (this.data.activeSessions.length !== initialLen) {
-      this.persist();
-      return true;
-    }
-    return false;
+    return governanceRepository.terminateSession(sessionIdOrId);
   }
 
-  // --- Security Threats & IP Blocking ---
+  // --- Security Threats & IP Blocking (Subsystem 6: Governance Repository) ---
   public getThreats(): SecurityThreat[] {
-    return [...this.data.threats];
+    return governanceRepository.getThreats();
   }
 
   public addThreat(threat: Omit<SecurityThreat, 'id' | 'occurredAt'>): SecurityThreat {
-    const newThreat: SecurityThreat = {
-      ...threat,
-      id: `th-${Date.now()}`,
-      occurredAt: new Date().toISOString().replace('T', ' ').slice(0, 16)
-    };
-    this.data.threats.unshift(newThreat);
-    if (this.data.threats.length > 100) {
-      this.data.threats = this.data.threats.slice(0, 100);
-    }
-    this.persist();
-    return newThreat;
+    return governanceRepository.addThreat(threat);
   }
 
   public getBlockedIps(): BlockedIp[] {
-    return [...this.data.blockedIps];
+    return governanceRepository.getBlockedIps();
   }
 
   public blockIp(ip: string, reason: string, blockedBy: string): BlockedIp {
-    const existing = this.data.blockedIps.find(b => b.ip === ip);
-    if (existing) return existing;
-
-    const entry: BlockedIp = {
-      ip,
-      reason,
-      blockedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      blockedBy
-    };
-    this.data.blockedIps.unshift(entry);
-
-    // Also mark threats matching this IP as blocked
-    this.data.threats.forEach(t => {
-      if (t.ipAddress === ip) t.blocked = true;
-    });
-
-    this.persist();
-    return entry;
+    return governanceRepository.blockIp(ip, reason, blockedBy);
   }
 
   public unblockIp(ip: string): boolean {
-    const initialLen = this.data.blockedIps.length;
-    this.data.blockedIps = this.data.blockedIps.filter(b => b.ip !== ip);
-    this.data.threats.forEach(t => {
-      if (t.ipAddress === ip) t.blocked = false;
-    });
-    if (this.data.blockedIps.length !== initialLen) {
-      this.persist();
-      return true;
-    }
-    return false;
+    return governanceRepository.unblockIp(ip);
   }
 
   public isIpBlocked(ip: string): boolean {
-    return this.data.blockedIps.some(b => b.ip === ip);
+    return governanceRepository.isIpBlocked(ip);
   }
 
-  // --- System Settings ---
+  // --- System Settings (Subsystem 6: Governance Repository) ---
   public getSystemSettings(): SystemSettings {
-    return { ...this.data.systemSettings };
+    return governanceRepository.getSystemSettings();
   }
 
   public updateSystemSettings(updates: Partial<SystemSettings>): SystemSettings {
-    this.data.systemSettings = {
-      ...this.data.systemSettings,
-      ...updates
-    };
-    this.persist();
-    return this.data.systemSettings;
+    return governanceRepository.updateSystemSettings(updates);
   }
 
-  // --- Feature Flags ---
+  // --- Feature Flags (Subsystem 6: Governance Repository) ---
   public getFeatureFlags(): FeatureFlag[] {
-    return [...this.data.featureFlags];
+    return governanceRepository.getFeatureFlags();
   }
 
   public toggleFeatureFlag(key: string): FeatureFlag | undefined {
-    const flag = this.data.featureFlags.find(f => f.key === key);
-    if (!flag) return undefined;
-    flag.enabled = !flag.enabled;
-    flag.updatedAt = new Date().toISOString().split('T')[0];
-    this.persist();
-    return flag;
+    return governanceRepository.toggleFeatureFlag(key);
   }
 
   public updateFeatureFlag(key: string, updates: Partial<FeatureFlag>): FeatureFlag | undefined {
-    const flag = this.data.featureFlags.find(f => f.key === key);
-    if (!flag) return undefined;
-    Object.assign(flag, updates, { updatedAt: new Date().toISOString().split('T')[0] });
-    this.persist();
-    return flag;
+    return governanceRepository.updateFeatureFlag(key, updates);
   }
 
-  // --- Backups & Restore ---
+  // --- Backups & Restore (Subsystem 6: Governance Repository) ---
   public getBackups(): BackupPoint[] {
-    return [...this.data.backups];
+    return governanceRepository.getBackups();
   }
 
   public createBackup(createdBy: string, notes?: string): BackupPoint {
-    if (!fs.existsSync(BACKUPS_DIR)) {
-      fs.mkdirSync(BACKUPS_DIR, { recursive: true });
-    }
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `dalani_backup_${timestamp}.json`;
-    const fullBackupPath = path.resolve(BACKUPS_DIR, fileName);
-
-    const fullDump = JSON.stringify(this.data, null, 2);
-    const hash = crypto.createHash('sha256').update(fullDump).digest('hex');
-    fs.writeFileSync(fullBackupPath, fullDump, 'utf-8');
-
-    const backupPoint: BackupPoint = {
-      id: `bkp-${Date.now()}`,
-      fileName,
-      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      createdBy,
-      sizeBytes: Buffer.byteLength(fullDump, 'utf-8'),
-      recordsCount: {
-        listings: this.data.listings.length,
-        users: this.data.users.length,
-        organizations: this.data.organizations.length,
-        auditLogs: this.data.auditLogs.length,
-        verifications: this.data.verifications.length,
-        reports: this.data.reports.length,
-        tickets: this.data.tickets.length
-      },
-      checksumSha256: hash,
-      status: 'valid',
-      notes: notes || 'نسخة احتياطية كاملة وموثقة للمنظومة'
-    };
-
-    this.data.backups.unshift(backupPoint);
-    this.persist();
-    return backupPoint;
+    return governanceRepository.createBackup(createdBy, notes);
   }
 
   public restoreBackup(backupId: string, performedBy: string): { success: boolean; message: string; safetyBackupId?: string } {
-    const backup = this.data.backups.find(b => b.id === backupId);
-    if (!backup) {
-      return { success: false, message: 'ملف النسخة الاحتياطية غير موجود في السجل' };
-    }
-
-    const backupFileName = backup.fileName || backup.name || '';
-    if (!backupFileName) {
-      return { success: false, message: 'اسم ملف النسخة الاحتياطية غير محدد' };
-    }
-
-    const fullBackupPath = path.resolve(BACKUPS_DIR, backupFileName);
-    let backupContent: string;
-
-    if (fs.existsSync(fullBackupPath)) {
-      backupContent = fs.readFileSync(fullBackupPath, 'utf-8');
-    } else {
-      // If standalone backup file missing on disk, fallback to checking if state was recorded
-      return { success: false, message: `تعذر قراءة ملف النسخة من المسار: ${backupFileName}` };
-    }
-
-    // Verify Checksum
-    const currentHash = crypto.createHash('sha256').update(backupContent).digest('hex');
-    if (backup.checksumSha256 && backup.checksumSha256 !== currentHash) {
-      backup.status = 'corrupted';
-      this.persist();
-      return { success: false, message: 'فشل التحقق من التوقيع الرقمي للنسخة الاحتياطية، تم إلغاء الاستعادة لحماية البيانات.' };
-    }
-
-    // Create automatic safety snapshot before restoring
-    const safetySnapshot = this.createBackup(
-      `النظام الآلي (قبل استعادة ${backup.fileName})`,
-      'نسخة أمان تلقائية تم أخذها مباشرة قبل تنفيذ عملية استرجاع لتأمين إمكانية التراجع'
-    );
-
-    try {
-      const restoredData = JSON.parse(backupContent);
-      if (!Array.isArray(restoredData.listings) || !Array.isArray(restoredData.users)) {
-        return { success: false, message: 'بنية ملف النسخة الاحتياطية غير متوافقة أو ينقصها جداول أساسية' };
-      }
-
-      // Restore data while preserving current backups registry and audit trail continuity
-      this.data.listings = restoredData.listings.map(normalizeListing);
-      this.data.organizations = restoredData.organizations || [];
-      this.data.verifications = restoredData.verifications || [];
-      this.data.reports = restoredData.reports || [];
-      this.data.tickets = restoredData.tickets || [];
-      this.data.users = restoredData.users || [];
-      this.data.staff = restoredData.staff || getDefaultStaff(this.data.users);
-      this.data.rolesMatrix = restoredData.rolesMatrix || getDefaultRolesMatrix();
-      this.data.systemSettings = restoredData.systemSettings || getDefaultSystemSettings();
-      this.data.featureFlags = restoredData.featureFlags || getDefaultFeatureFlags();
-
-      this.persist();
-      return {
-        success: true,
-        message: `تمت استعادة البيانات بنجاح من النسخة ${backup.fileName}`,
-        safetyBackupId: safetySnapshot.id
-      };
-    } catch (err: any) {
-      return { success: false, message: `خطأ أثناء استعادة البيانات: ${err.message}` };
-    }
+    return governanceRepository.restoreBackup(backupId, performedBy);
   }
 
-  // --- System Error Logs ---
+  // --- System Error Logs (Subsystem 6: Governance Repository) ---
   public getSystemErrors(): SystemErrorLog[] {
-    return [...this.data.systemErrors];
+    return governanceRepository.getSystemErrors();
   }
 
   public logSystemError(code: string, module: string, message: string, severity: SystemErrorLog['severity'] = 'error'): SystemErrorLog {
-    const errorLog: SystemErrorLog = {
-      id: `err-${Date.now()}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      code,
-      module,
-      message,
-      severity,
-      status: 'open'
-    };
-    this.data.systemErrors.unshift(errorLog);
-    if (this.data.systemErrors.length > 100) {
-      this.data.systemErrors = this.data.systemErrors.slice(0, 100);
-    }
-    this.persist();
-    return errorLog;
+    return governanceRepository.logSystemError(code, module, message, severity);
   }
 
   public resolveSystemError(id: string, resolvedBy: string): SystemErrorLog | undefined {
-    const error = this.data.systemErrors.find(e => e.id === id);
-    if (!error) return undefined;
-    error.status = 'resolved';
-    error.resolvedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
-    error.resolvedBy = resolvedBy;
-    this.persist();
-    return error;
+    return governanceRepository.resolveSystemError(id, resolvedBy);
   }
 
-  // --- Integrations ---
+  // --- Integrations (Subsystem 6: Governance Repository) ---
   public getIntegrations(): IntegrationServiceStatus[] {
-    return [...this.data.integrations];
+    return governanceRepository.getIntegrations();
   }
 
   public updateIntegrationStatus(id: string, updates: Partial<IntegrationServiceStatus>): IntegrationServiceStatus | undefined {
-    const item = this.data.integrations.find(i => i.id === id);
-    if (!item) return undefined;
-    Object.assign(item, updates, { lastCheckedAt: new Date().toISOString().replace('T', ' ').slice(0, 16) });
-    this.persist();
-    return item;
+    return governanceRepository.updateIntegrationStatus(id, updates);
   }
 
-  // --- Escalations ---
+  // --- Escalations (Subsystem 6: Governance Repository) ---
   public getEscalations(): EscalationCase[] {
-    return [...this.data.escalations];
+    return governanceRepository.getEscalations();
   }
 
   public resolveEscalation(id: string, status: 'approved' | 'rejected', notes: string): EscalationCase | undefined {
-    const item = this.data.escalations.find(e => e.id === id);
-    if (!item) return undefined;
-    item.status = status;
-    item.adminResolutionNotes = notes;
-    item.resolvedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
-    this.persist();
-    return item;
+    return governanceRepository.resolveEscalation(id, status, notes);
   }
 
-  // --- Data Integrity Check & Repair ---
-  public checkDataIntegrity(): {
-    isHealthy: boolean;
-    issuesFound: string[];
-    stats: {
-      totalListings: number;
-      totalUsers: number;
-      orphanListings: number;
-      unlinkedTickets: number;
-      missingDeedBadges: number;
-      staleSessionsCount: number;
-    };
-  } {
-    const issues: string[] = [];
-    const userIds = new Set(this.data.users.map(u => u.id));
-
-    // Check orphan listings
-    const orphanListings = this.data.listings.filter(l => l.advertiser && !userIds.has(l.advertiser.id));
-    if (orphanListings.length > 0) {
-      issues.push(`تم رصد ${orphanListings.length} عقارات بمعرف معلن غير مسجل في جدول المستخدمين.`);
-    }
-
-    // Check unlinked tickets
-    const unlinkedTickets = this.data.tickets.filter(t => !userIds.has(t.userId));
-    if (unlinkedTickets.length > 0) {
-      issues.push(`تم رصد ${unlinkedTickets.length} تذاكر دعم فني لا يرتبط أصحابها بحسابات مسجلة.`);
-    }
-
-    const missingDeedBadges = this.data.listings.filter(
-      l => l.status === 'published' && (!l.verificationBadges || l.verificationBadges.length === 0)
-    ).length;
-
-    const staleSessions = this.data.activeSessions.filter(s => {
-      // Sessions with lastActiveAt older than timeout
-      return false;
-    });
-
-    return {
-      isHealthy: issues.length === 0,
-      issuesFound: issues,
-      stats: {
-        totalListings: this.data.listings.length,
-        totalUsers: this.data.users.length,
-        orphanListings: orphanListings.length,
-        unlinkedTickets: unlinkedTickets.length,
-        missingDeedBadges,
-        staleSessionsCount: staleSessions.length
-      }
-    };
+  // --- Data Integrity Check & Repair (Subsystem 6: Governance Repository) ---
+  public checkDataIntegrity() {
+    return governanceRepository.checkDataIntegrity();
   }
 
-  public repairDataIntegrity(): { repairedCount: number; summary: string } {
-    let repaired = 0;
-    const defaultOwner = this.data.users.find(u => u.role === 'advertiser') || this.data.users[0];
-
-    // Link orphan listings to valid default owner
-    const userIds = new Set(this.data.users.map(u => u.id));
-    this.data.listings.forEach(l => {
-      if (l.advertiser && !userIds.has(l.advertiser.id) && defaultOwner) {
-        l.advertiser.id = defaultOwner.id;
-        l.advertiser.name = defaultOwner.name;
-        repaired++;
-      }
-    });
-
-    this.persist();
-    return {
-      repairedCount: repaired,
-      summary: `تم إصلاح ${repaired} علاقة وسجلات يتيمة بنجاح، وجميع البيانات مترابطة الآن.`
-    };
+  public repairDataIntegrity() {
+    return governanceRepository.repairDataIntegrity();
   }
 
   // ==========================================
@@ -2312,82 +1916,43 @@ class LocalDatabase {
   // ==========================================
 
   public getRequests(): PropertyRequest[] {
-    return [...this.data.requests];
+    return operationsRepository.getRequests();
   }
 
   public getRequestById(id: string): PropertyRequest | undefined {
-    return this.data.requests.find(r => r.id === id);
+    return operationsRepository.getRequestById(id);
   }
 
   public addRequest(req: PropertyRequest): PropertyRequest {
-    this.data.requests.unshift(req);
-    this.persist();
-    this.syncPgRequest(req);
-    return req;
+    return operationsRepository.addRequest(req);
   }
 
   public updateRequest(id: string, updates: Partial<PropertyRequest>): PropertyRequest | undefined {
-    const index = this.data.requests.findIndex(r => r.id === id);
-    if (index === -1) return undefined;
-    this.data.requests[index] = {
-      ...this.data.requests[index],
-      ...updates,
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
-    this.persist();
-    this.syncPgRequest(this.data.requests[index]);
-    return this.data.requests[index];
+    return operationsRepository.updateRequest(id, updates);
   }
 
   public deleteRequest(id: string): boolean {
-    const prevLen = this.data.requests.length;
-    this.data.requests = this.data.requests.filter(r => r.id !== id);
-    if (this.data.requests.length !== prevLen) {
-      this.persist();
-      if (pgDb) pgDb.delete(schema.propertyRequestsTable).where(eq(schema.propertyRequestsTable.id, id)).catch(err => console.error('[PostgreSQL Sync] Delete request error:', err?.message || err));
-      return true;
-    }
-    return false;
+    return operationsRepository.deleteRequest(id);
   }
 
   public getBookings(): PropertyBooking[] {
-    this.checkBookingsExpiration();
-    return [...this.data.bookings];
+    return operationsRepository.getBookings();
   }
 
   public getBookingById(id: string): PropertyBooking | undefined {
-    this.checkBookingsExpiration();
-    return this.data.bookings.find(b => b.id === id);
+    return operationsRepository.getBookingById(id);
   }
 
   public getActiveBookingForListing(listingId: string): PropertyBooking | undefined {
-    this.checkBookingsExpiration();
-    const now = new Date().getTime();
-    return this.data.bookings.find(
-      b => b.listingId === listingId && b.status === 'active' && new Date(b.expiresAt).getTime() > now
-    );
+    return operationsRepository.getActiveBookingForListing(listingId);
   }
 
   public addBooking(booking: PropertyBooking): PropertyBooking {
-    this.data.bookings.unshift(booking);
-    this.syncListingsReservationStatus();
-    this.persist();
-    this.syncPgBooking(booking);
-    return booking;
+    return operationsRepository.addBooking(booking);
   }
 
   public updateBooking(id: string, updates: Partial<PropertyBooking>): PropertyBooking | undefined {
-    const index = this.data.bookings.findIndex(b => b.id === id);
-    if (index === -1) return undefined;
-    this.data.bookings[index] = {
-      ...this.data.bookings[index],
-      ...updates,
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
-    this.syncListingsReservationStatus();
-    this.persist();
-    this.syncPgBooking(this.data.bookings[index]);
-    return this.data.bookings[index];
+    return operationsRepository.updateBooking(id, updates);
   }
 
   public validateDealCompletionPrerequisites(bookingId: string): {
@@ -2701,70 +2266,7 @@ class LocalDatabase {
     reason: string,
     actor: { id: string; name: string; role: UserRole }
   ): { booking?: PropertyBooking; listing?: Listing; contract?: PropertyContract } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return {};
-
-    const nowStr = new Date().toISOString();
-    const dateOnly = nowStr.split('T')[0];
-
-    const categoryNames: Record<string, string> = {
-      buyer_retracted: 'انسحاب المشتري / المستأجر',
-      seller_retracted: 'انسحاب البائع / المؤجر',
-      inspection_unsatisfactory: 'عدم الرضا بعد المعاينة الميدانية',
-      deed_issue: 'ملاحظات على صك الملكية والبصيرة الشرعية',
-      price_disagreement: 'عدم الاتفاق النهائي على الشروط والسعر',
-      mutual_cancellation: 'إلغاء وفسخ الاتفاق بالتراضي',
-      dispute_cancelled: 'إلغاء المعاملة بقرار إداري نتيجة نزاع'
-    };
-
-    booking.status = 'cancelled';
-    booking.cancellationCategory = category;
-    booking.cancellationReason = `${categoryNames[category] || category}: ${reason}`;
-    booking.cancelledBy = actor.name;
-    booking.cancelledAt = nowStr;
-    booking.updatedAt = dateOnly;
-
-    // Release reservation on listing if not sold
-    const listing = this.getListingById(booking.listingId);
-    if (listing && listing.status !== 'completed') {
-      listing.isReserved = false;
-      listing.reservedUntil = undefined;
-      listing.activeBookingId = undefined;
-      listing.updatedAt = dateOnly;
-    }
-
-    // Cancel contract if exists
-    let contract = this.getContractByBookingId(booking.id);
-    if (contract && contract.status !== 'signed') {
-      contract.status = 'cancelled';
-      contract.notes = `${contract.notes ? contract.notes + '\n' : ''}تم إلغاء العقد تبعاً لإلغاء الحجز بواسطة [${actor.name}]. السبب: ${reason}`;
-      contract.updatedAt = dateOnly;
-    }
-
-    this.addDealMessage(booking.id, {
-      senderId: 'system',
-      senderName: 'نظام دلنّي العقاري',
-      senderRole: 'system_admin',
-      type: 'system',
-      text: `❌ تم إلغاء الحجز والمعاملة بواسطة [${actor.name}]. التصنيف: [${categoryNames[category]}]. البيان: ${reason}. تم فك حجز العقار وإعادته للوفرة.`
-    });
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'reject',
-      targetType: 'booking',
-      targetId: booking.id,
-      targetNumber: booking.bookingNumber,
-      details: `إلغاء الحجز [${booking.bookingNumber}] بواسطة [${actor.name}]. التصنيف: [${categoryNames[category]}]. السبب: ${reason}`,
-      severity: 'warning'
-    });
-
-    this.syncListingsReservationStatus();
-    this.persist();
-
-    return { booking, listing, contract };
+    return operationsRepository.cancelBookingWithCategory(bookingId, category, reason, actor);
   }
 
   public raiseDealDispute(
@@ -2773,71 +2275,7 @@ class LocalDatabase {
     claimDescription: string,
     actor: { id: string; name: string; role: UserRole }
   ): { booking?: PropertyBooking; dispute?: DealDispute } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return {};
-
-    const nowStr = new Date().toISOString();
-    const disputeId = `dsp-${Date.now()}`;
-
-    const dispute: DealDispute = {
-      id: disputeId,
-      bookingId,
-      raisedBy: { id: actor.id, name: actor.name, role: actor.role },
-      raisedAt: nowStr,
-      claimType,
-      claimDescription,
-      status: 'active'
-    };
-
-    booking.isDisputed = true;
-    booking.dispute = dispute;
-    booking.updatedAt = nowStr.split('T')[0];
-
-    // Create an escalation desk entry for administration (Requirement 10)
-    const escId = `esc-${Date.now()}`;
-    const claimLabels: Record<string, string> = {
-      breach_of_terms: 'إخلال بالشروط المتفق عليها',
-      misrepresentation: 'تضليل في مواصفات أو وثائق العقار',
-      payment_default: 'تعذر أو تأخر السداد المالي',
-      document_defect: 'نزاع على صك الملكية والبصيرة الشرعية',
-      other: 'نزاع عام'
-    };
-
-    this.data.escalations.unshift({
-      id: escId,
-      caseNumber: `DISP-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: `نزاع صفقة عقارية [${booking.bookingNumber}] - ${claimLabels[claimType] || claimType}`,
-      sourceType: 'report',
-      sourceId: booking.id,
-      submittedBy: `${actor.name} (${actor.role})`,
-      priority: 'high',
-      status: 'pending_admin',
-      description: `تم تجميد الصفقة بسبب نزاع: ${claimDescription}. العقار: [${booking.listingTitle}].`,
-      createdAt: nowStr.split('T')[0]
-    });
-
-    this.addDealMessage(booking.id, {
-      senderId: 'system',
-      senderName: 'نظام دلنّي العقاري',
-      senderRole: 'system_admin',
-      type: 'system',
-      text: `⚠️ تنبيه نزاع قانوني: قام [${actor.name}] برفع طلب نزاع رسمي حول هذه الصفقة (${claimLabels[claimType]}). تم تجميد إجراءات إتمام المعاملة مؤقتاً وإحالتها للمشرفين وإدارة النظام للفحص والمصادقة.`
-    });
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'update',
-      targetType: 'booking',
-      targetId: booking.id,
-      targetNumber: booking.bookingNumber,
-      details: `رفع نزاع قانوني على الصفقة [${booking.bookingNumber}] بواسطة [${actor.name}]. السبب: ${claimDescription}`,
-      severity: 'warning'
-    });
-
-    this.persist();
-    return { booking, dispute };
+    return operationsRepository.raiseDealDispute(bookingId, claimType, claimDescription, actor);
   }
 
   public resolveDealDispute(
@@ -2846,36 +2284,7 @@ class LocalDatabase {
     resolutionNotes: string,
     actor: { id: string; name: string; role: UserRole }
   ): { booking?: PropertyBooking; dispute?: DealDispute } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking || !booking.dispute) return {};
-
-    const nowStr = new Date().toISOString();
-
-    if (resolution === 'cancel_deal') {
-      booking.dispute.status = 'resolved';
-      booking.dispute.resolutionNotes = resolutionNotes;
-      booking.dispute.resolvedAt = nowStr;
-      booking.dispute.resolvedBy = actor.name;
-      booking.isDisputed = false;
-      this.cancelBookingWithCategory(booking.id, 'dispute_cancelled', resolutionNotes, actor);
-    } else {
-      booking.dispute.status = resolution;
-      booking.dispute.resolutionNotes = resolutionNotes;
-      booking.dispute.resolvedAt = nowStr;
-      booking.dispute.resolvedBy = actor.name;
-      booking.isDisputed = false;
-
-      this.addDealMessage(booking.id, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `⚖️ قرار إداري: تم فض النزاع المعلق من قبل الإدارة [${actor.name}] (${resolution === 'resolved' ? 'تمت التسوية' : 'رد الدعوى'}). ملاحظات القرار: ${resolutionNotes}. تم استئناف مسار الصفقة.`
-      });
-    }
-
-    this.persist();
-    return { booking, dispute: booking.dispute };
+    return operationsRepository.resolveDealDispute(bookingId, resolution, resolutionNotes, actor);
   }
 
   public checkBookingsExpiration(): boolean {
@@ -2940,28 +2349,7 @@ class LocalDatabase {
     bookingId: string,
     message: { senderId: string; senderName: string; senderRole: UserRole; text: string; type?: DealMessage['type'] }
   ): DealMessage | undefined {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return undefined;
-
-    if (!Array.isArray(booking.messages)) {
-      booking.messages = [];
-    }
-
-    const newMsg: DealMessage = {
-      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      bookingId,
-      senderId: message.senderId,
-      senderName: message.senderName,
-      senderRole: message.senderRole,
-      text: message.text,
-      type: message.type || 'chat',
-      timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })
-    };
-
-    booking.messages.push(newMsg);
-    booking.updatedAt = new Date().toISOString().split('T')[0];
-    this.persist();
-    return newMsg;
+    return operationsRepository.addDealMessage(bookingId, message);
   }
 
   public proposeDealTerms(
@@ -2969,64 +2357,7 @@ class LocalDatabase {
     terms: DealTerms,
     proposer: { id: string; name: string; role: UserRole }
   ): { booking?: PropertyBooking; revision?: TermsRevision; wasApprovedModified: boolean } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return { wasApprovedModified: false };
-
-    if (!Array.isArray(booking.termsHistory)) {
-      booking.termsHistory = [];
-    }
-
-    const wasApproved = Boolean(booking.termsStatus === 'accepted' || booking.agreedTerms);
-    const newVersion = (booking.termsHistory.length || 0) + 1;
-    const nowTimeStr = new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' });
-
-    let newStatus: TermsStatus = 'pending_approval';
-
-    if (wasApproved) {
-      // REQUIREMENT 8: Prevent silent modification of approved terms!
-      // Any attempt to modify an accepted deal suspends approval and requires re-approval
-      newStatus = 'pending_reapproval';
-      booking.termsStatus = 'pending_reapproval';
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'terms_modified',
-        text: `⚠️ تنبيه حوكمة: قام [${proposer.name}] بطلب تعديل على الشروط المعتمدة مسبقاً (الإصدار #${newVersion}). تم تعليق الاعتماد المسبق تلقائياً ويتطلب موافقة الطرف الآخر الصريحة لمنع التعديل الصامت.`
-      });
-    } else {
-      // Mark previous pending revisions as superseded
-      booking.termsHistory.forEach(r => {
-        if (r.status === 'pending_approval') {
-          r.status = 'superseded';
-        }
-      });
-      booking.termsStatus = 'pending_approval';
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'terms_proposal',
-        text: `📄 قدم [${proposer.name}] مقترح شروط جديد (الإصدار #${newVersion}) بقيمة [${terms.price.toLocaleString()} ${terms.currency}]. قيد مراجعة الطرف الآخر.`
-      });
-    }
-
-    const revision: TermsRevision = {
-      id: `rev-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      version: newVersion,
-      proposedBy: proposer,
-      proposedAt: nowTimeStr,
-      terms,
-      status: newStatus
-    };
-
-    booking.currentTerms = terms;
-    booking.termsHistory.unshift(revision);
-    booking.dealStage = 'terms_negotiation';
-    booking.updatedAt = new Date().toISOString().split('T')[0];
-    this.persist();
-
-    return { booking, revision, wasApprovedModified: wasApproved };
+    return operationsRepository.proposeDealTerms(bookingId, terms, proposer);
   }
 
   public respondToDealTerms(
@@ -3036,63 +2367,7 @@ class LocalDatabase {
     responder: { id: string; name: string; role: UserRole },
     responseNotes?: string
   ): { booking?: PropertyBooking; revision?: TermsRevision; error?: string } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return { error: 'الحجز غير موجود' };
-
-    if (!Array.isArray(booking.termsHistory)) {
-      return { error: 'لا توجد مسودات شروط سابقة' };
-    }
-
-    const revision = booking.termsHistory.find(r => r.id === revisionId) || booking.termsHistory[0];
-    if (!revision) {
-      return { error: 'المسودة المحددة غير موجودة' };
-    }
-
-    if (revision.status !== 'pending_approval' && revision.status !== 'pending_reapproval') {
-      return { error: `هذه المسودة تمت معالجتها مسبقاً وحالتها [${revision.status}]` };
-    }
-
-    const nowTimeStr = new Date().toLocaleString('ar-YE', { dateStyle: 'short', timeStyle: 'short' });
-
-    if (action === 'accept') {
-      revision.status = 'accepted';
-      revision.responseBy = responder;
-      revision.responseAt = nowTimeStr;
-      revision.responseNotes = responseNotes || 'تمت الموافقة واعتماد الشروط';
-
-      booking.termsStatus = 'accepted';
-      booking.agreedTerms = { ...revision.terms };
-      booking.agreedTermsApprovedAt = new Date().toISOString();
-      booking.dealStage = 'terms_negotiation';
-
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'terms_accepted',
-        text: `✅ تم اعتماد الشروط النهائية رسمياً من قبل [${responder.name}]. الشروط المعتمدة أصبحت ملزمة مبدئياً ولا يمكن تعديلها بصمت.`
-      });
-    } else {
-      revision.status = 'rejected';
-      revision.responseBy = responder;
-      revision.responseAt = nowTimeStr;
-      revision.responseNotes = responseNotes || 'تم رفض مسودة الشروط';
-
-      booking.termsStatus = 'rejected';
-
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'chat',
-        text: `❌ اعتذر [${responder.name}] عن مسودة الشروط (الإصدار #${revision.version}). ملاحظات: ${responseNotes || 'يرجى مراجعة وتعديل البنود'}.`
-      });
-    }
-
-    booking.updatedAt = new Date().toISOString().split('T')[0];
-    this.persist();
-
-    return { booking, revision };
+    return operationsRepository.respondToDealTerms(bookingId, revisionId, action, responder, responseNotes);
   }
 
   public updateInspectionVisit(
@@ -3100,50 +2375,7 @@ class LocalDatabase {
     visit: Partial<InspectionVisit>,
     actor: { id: string; name: string; role: UserRole }
   ): { booking?: PropertyBooking; visit?: InspectionVisit } {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return {};
-
-    const prevStatus = booking.inspectionVisit?.status || 'not_scheduled';
-    const updatedVisit: InspectionVisit = {
-      ...(booking.inspectionVisit || { status: 'not_scheduled' }),
-      ...visit
-    };
-
-    if (visit.status === 'confirmed' && prevStatus !== 'confirmed') {
-      updatedVisit.confirmedAt = new Date().toISOString();
-      booking.dealStage = 'inspection_deed';
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'inspection_update',
-        text: `📅 تم تأكيد موعد المعاينة الميدانية بتاريخ [${updatedVisit.requestedDate || ''} ${updatedVisit.requestedTime || ''}] من قبل [${actor.name}]. ملاحظات الموقع: ${updatedVisit.locationNotes || 'الموقع محدد'}.`
-      });
-    } else if (visit.status === 'completed' && prevStatus !== 'completed') {
-      updatedVisit.completedAt = new Date().toISOString();
-      const resultText = updatedVisit.result === 'satisfied' ? 'معاينة ناجحة ومطابقة للوصف' : updatedVisit.result === 'needs_negotiation' ? 'ملاحظات تستدعي التفاوض' : 'عدم الرغبة بعد المعاينة';
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'inspection_update',
-        text: `🏁 تم تسجيل نتيجة المعاينة الميدانية: [${resultText}] بواسطة [${actor.name}]. ملاحظات: ${updatedVisit.resultNotes || 'لا توجد'}.`
-      });
-    } else if (visit.status === 'requested' && prevStatus !== 'requested') {
-      this.addDealMessage(bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'inspection_update',
-        text: `📍 طلب [${actor.name}] موعد معاينة ميدانية للعقار في [${updatedVisit.requestedDate} ${updatedVisit.requestedTime || ''}]. قيد تأكيد المعلن.`
-      });
-    }
-
-    booking.inspectionVisit = updatedVisit;
-    booking.updatedAt = new Date().toISOString().split('T')[0];
-    this.persist();
-
-    return { booking, visit: updatedVisit };
+    return operationsRepository.updateInspectionVisit(bookingId, visit, actor);
   }
 
   public updateDealStage(
@@ -3151,274 +2383,32 @@ class LocalDatabase {
     stage: DealStage,
     actor: { id: string; name: string; role: UserRole }
   ): PropertyBooking | undefined {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) return undefined;
-
-    booking.dealStage = stage;
-    booking.updatedAt = new Date().toISOString().split('T')[0];
-
-    const stageNames: Record<DealStage, string> = {
-      request_submitted: 'تقديم الطلب ومراجعة المعلن',
-      booking_exclusive: 'تأكيد الحجز المؤقت وحصرية العقار',
-      inspection_deed: 'المعاينة الميدانية وفحص الوثائق',
-      terms_negotiation: 'التفاوض واعتماد الشروط النهائية',
-      contract_completed: 'إبرام العقد وإتمام الصفقة'
-    };
-
-    this.addDealMessage(bookingId, {
-      senderId: 'system',
-      senderName: 'نظام دلنّي العقاري',
-      senderRole: 'system_admin',
-      type: 'system',
-      text: `🔄 تم نقل مرحلة الصفقة إلى: [${stageNames[stage]}] بواسطة [${actor.name}].`
-    });
-
-    this.persist();
-    return booking;
+    return operationsRepository.updateDealStage(bookingId, stage, actor);
   }
 
   // ==========================================
-  // CONTRACT METHODS (منظومة العقود والتوثيق)
+  // ==========================================
+  // CONTRACT METHODS (Subsystem 5: Contracts Repository)
   // ==========================================
 
-  public getContracts(filter?: { bookingId?: string; listingId?: string; partyId?: string; status?: ContractStatus }): PropertyContract[] {
-    let result = this.data.contracts || [];
-    if (!filter) return result;
-    if (filter.bookingId) result = result.filter(c => c.bookingId === filter.bookingId);
-    if (filter.listingId) result = result.filter(c => c.listingId === filter.listingId);
-    if (filter.status) result = result.filter(c => c.status === filter.status);
-    if (filter.partyId) {
-      result = result.filter(c =>
-        c.firstParty?.id === filter.partyId ||
-        c.secondParty?.id === filter.partyId ||
-        c.witnesses?.some(w => w.id === filter.partyId)
-      );
-    }
-    return result;
+  public getContracts(filters?: { bookingId?: string; listingId?: string; status?: ContractStatus }): PropertyContract[] {
+    return contractsRepository.getContracts(filters);
   }
 
   public getContractById(contractId: string): PropertyContract | undefined {
-    return (this.data.contracts || []).find(c => c.id === contractId);
+    return contractsRepository.getContractById(contractId);
   }
 
   public getContractByBookingId(bookingId: string): PropertyContract | undefined {
-    return (this.data.contracts || []).find(c => c.bookingId === bookingId);
+    return contractsRepository.getContractByBookingId(bookingId);
   }
 
   public createContractFromBooking(
     bookingId: string,
-    actor: { id: string; name: string; role: UserRole },
-    options?: { customType?: ContractType; customClauses?: ContractClause[] }
+    actorOrOptions?: { id?: string; name?: string; role?: UserRole } | { customType?: 'sale' | 'lease'; contractType?: 'sale' | 'lease'; customClauses?: ContractClause[] },
+    optionsParam?: { customType?: 'sale' | 'lease'; contractType?: 'sale' | 'lease'; customClauses?: ContractClause[] }
   ): PropertyContract {
-    const booking = this.getBookingById(bookingId);
-    if (!booking) {
-      throw new Error('الحجز غير موجود');
-    }
-
-    // Check if contract already exists
-    const existing = this.getContractByBookingId(bookingId);
-    if (existing) {
-      return existing;
-    }
-
-    const listing = this.getListingById(booking.listingId);
-    const contractType: ContractType = options?.customType || (listing?.purpose === 'sale' ? 'sale' : 'lease');
-    const terms = booking.agreedTerms || booking.currentTerms;
-    const linkedReq = booking.requestId ? this.getRequestById(booking.requestId) : undefined;
-    const price = terms?.price || booking.listingPrice || 0;
-    const currency = terms?.currency || booking.listingCurrency || 'USD';
-    const deposit = terms?.depositAmount || Math.round(price * 0.05);
-
-    const clauses = options?.customClauses && options.customClauses.length > 0
-      ? options.customClauses
-      : generateStandardContractClauses(contractType, booking, listing, terms);
-
-    const nowStr = new Date().toISOString();
-    const dateStr = nowStr.split('T')[0];
-    const contractId = `cnt-${Date.now()}`;
-    const contractNumber = `CNT-2026-${Math.floor(2000 + Math.random() * 8000)}`;
-
-    const seekerUser = this.getUserById(booking.seekerId);
-    const advUser = this.getUserById(booking.advertiserId);
-
-    const newContract: PropertyContract = {
-      id: contractId,
-      contractNumber,
-      bookingId: booking.id,
-      bookingNumber: booking.bookingNumber,
-      requestId: booking.requestId,
-      listingId: booking.listingId,
-      listingNumber: booking.listingNumber,
-      listingTitle: booking.listingTitle,
-      contractType,
-      status: 'draft',
-      propertySnapshot: {
-        title: listing?.title || booking.listingTitle,
-        propertyType: listing?.propertyType || 'apartment',
-        purpose: listing?.purpose || (contractType === 'sale' ? 'sale' : 'rent'),
-        governorate: listing?.location?.governorate || booking.listingGovernorate || 'صنعاء',
-        city: listing?.location?.city || 'صنعاء',
-        district: listing?.location?.district || 'الأمانة',
-        street: listing?.location?.street || 'الشارع الرئيسي',
-        area: listing?.area || 0,
-        areaUnit: listing?.areaUnit || 'م²',
-        deedNumber: listing?.deedNumber || 'صك مقيد بالسجل العقاري المعتمد',
-        boundaries: {
-          north: 'شارع معبد نافذ',
-          south: 'عقار مجاور',
-          east: 'شارع فرعي',
-          west: 'عقار مجاور'
-        }
-      },
-      firstParty: {
-        id: advUser?.id || booking.advertiserId,
-        name: advUser?.name || booking.advertiserName,
-        phone: advUser?.phone || booking.advertiserPhone,
-        role: contractType === 'sale' ? 'seller' : 'lessor',
-        nationalIdOrPassport: 'بطاقة شخصية صادرة من الجمهورية اليمنية',
-        address: listing?.location?.city ? `${listing.location.governorate} - ${listing.location.city}` : 'صنعاء',
-        signatureStatus: 'unsigned'
-      },
-      secondParty: {
-        id: seekerUser?.id || booking.seekerId,
-        name: seekerUser?.name || booking.seekerName,
-        phone: seekerUser?.phone || booking.seekerPhone,
-        role: contractType === 'sale' ? 'buyer' : 'lessee',
-        nationalIdOrPassport: 'بطاقة شخصية صادرة من الجمهورية اليمنية',
-        address: 'صنعاء',
-        signatureStatus: 'unsigned'
-      },
-      witnesses: [
-        {
-          id: 'wit-1',
-          name: 'فضيلة الشيخ / القاضي الأمين الشرعي المعتمد',
-          phone: '+967 771 000 111',
-          role: 'witness',
-          nationalIdOrPassport: 'ترخيص توثيق شرعي صادر عن وزارة العدل',
-          signatureStatus: 'unsigned'
-        },
-        {
-          id: 'wit-2',
-          name: 'شاهد إثبات ثانٍ',
-          phone: '+967 772 000 222',
-          role: 'witness',
-          nationalIdOrPassport: 'بطاقة شخصية سارية',
-          signatureStatus: 'unsigned'
-        }
-      ],
-      brokerOrAgent: {
-        id: 'dalani-broker',
-        name: 'منصة دلنّي العقارية',
-        phone: '+967 1 445 566',
-        commissionAmount: Math.round(price * 0.01),
-        commissionPayer: terms?.feeResponsibility || 'shared_equally'
-      },
-      financialTerms: {
-        totalAmount: price,
-        currency,
-        depositAmount: deposit,
-        depositCurrency: currency,
-        paymentSchedule: contractType === 'lease'
-          ? (terms?.paymentMethod === 'certified_check'
-              ? 'سداد مبلغ التأمين، وتسليم الأجرة مقدماً بشيك مصرفي مصدق'
-              : `سداد مبلغ التأمين والضمانة، وتسليم الأجرة مقدماً (${terms?.paymentFrequency || linkedReq?.paymentFrequency || 'شهرياً'}) بموجب سند قبض رسمي`)
-          : (terms?.paymentMethod === 'certified_check'
-              ? 'سداد العربون، وتسليم المتبقي بشيك مصرفي مصدق عند توقيع وثيقة الإفراغ والتسليم'
-              : 'سداد العربون، وتسليم المتبقي نقداً أو بحوالة بنكية معتمدة'),
-        advancePaymentMonths: contractType === 'lease' ? (terms?.paymentFrequency === 'annual' ? 12 : terms?.paymentFrequency === 'semi_annual' ? 6 : terms?.paymentFrequency === 'quarterly' ? 3 : 1) : undefined,
-        securityDeposit: contractType === 'lease' ? deposit : undefined
-      },
-      durationTerms: {
-        startDate: dateStr,
-        handoverDate: terms?.handoverDate || 'خلال أسبوعين من التوقيع',
-        durationMonths: contractType === 'lease' ? (terms?.leaseDurationMonths || linkedReq?.leaseDurationMonths || 12) : undefined,
-        renewalTerms: contractType === 'lease' ? 'إشعار خطي قبل 60 يوماً من الانتهاء' : undefined
-      },
-      clauses,
-      currentVersion: 1,
-      versionHistory: [
-        {
-          version: 1,
-          createdAt: nowStr,
-          createdBy: {
-            id: actor.id,
-            name: actor.name,
-            role: actor.role
-          },
-          summaryOfChanges: 'إنشاء مسودة العقد الرسمية واستيراد بيانات الحجز والشروط المتفق عليها وصك العقار',
-          clauses: clauses.map(c => ({ ...c })),
-          financialTerms: {
-            totalAmount: price,
-            currency,
-            depositAmount: deposit,
-            paymentSchedule: terms?.paymentMethod || 'certified_check'
-          },
-          status: 'draft'
-        }
-      ],
-      versions: [
-        {
-          version: 1,
-          createdAt: nowStr,
-          createdBy: {
-            id: actor.id,
-            name: actor.name,
-            role: actor.role
-          },
-          summaryOfChanges: 'إنشاء مسودة العقد الرسمية واستيراد بيانات الحجز والشروط المتفق عليها وصك العقار',
-          clauses: clauses.map(c => ({ ...c })),
-          financialTerms: {
-            totalAmount: price,
-            currency,
-            depositAmount: deposit,
-            paymentSchedule: terms?.paymentMethod || 'certified_check'
-          },
-          status: 'draft'
-        }
-      ],
-      firstPartyApprovedAt: actor.id === booking.advertiserId ? nowStr : undefined,
-      secondPartyApprovedAt: actor.id === booking.seekerId ? nowStr : undefined,
-      notes: `تم إنشاء المسودة تلقائياً بواسطة [${actor.name}] استناداً إلى الحجز [${booking.bookingNumber}].`,
-      createdAt: dateStr,
-      updatedAt: dateStr
-    };
-
-    if (!Array.isArray(this.data.contracts)) {
-      this.data.contracts = [];
-    }
-    this.data.contracts.unshift(newContract);
-
-    // Update booking link & advance deal stage
-    booking.contractId = newContract.id;
-    booking.contractNumber = newContract.contractNumber;
-    booking.dealStage = 'contract_completed';
-    booking.updatedAt = dateStr;
-
-    // Log audit log
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'create',
-      targetType: 'contract',
-      targetId: newContract.id,
-      targetNumber: newContract.contractNumber,
-      details: `إنشاء مسودة عقد [${contractType === 'sale' ? 'بيع عقاري' : 'إيجار'}] برقم [${newContract.contractNumber}] مرتبط بالحجز [${booking.bookingNumber}] والعقار [${booking.listingNumber}]`,
-      severity: 'info'
-    });
-
-    // Add deal message to workspace
-    this.addDealMessage(booking.id, {
-      senderId: 'system',
-      senderName: 'نظام دلنّي العقاري',
-      senderRole: 'system_admin',
-      type: 'system',
-      text: `📜 تم إعداد مسودة عقد [${contractType === 'sale' ? 'بيع عقاري' : 'إيجار'}] رسمي برقم [${newContract.contractNumber}] بواسطة [${actor.name}]. يمكن للأطراف مراجعة البنود واعتمادها قانونياً.`
-    });
-
-    this.persist();
-    this.syncPgContract(newContract);
-    return newContract;
+    return contractsRepository.createContractFromBooking(bookingId, actorOrOptions, optionsParam);
   }
 
   public updateContractDraft(
@@ -3433,96 +2423,7 @@ class LocalDatabase {
     },
     actor: { id: string; name: string; role: UserRole }
   ): { contract: PropertyContract; wasApprovedModified: boolean } {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    const wasApproved = contract.status === 'approved' || contract.status === 'signed';
-
-    // REQUIREMENT 6: Anti-Silent Modification protection!
-    if (wasApproved) {
-      contract.isModificationPendingApproval = true;
-      contract.modificationRequestedBy = actor.name;
-      contract.modificationReason = updates.summaryOfChanges || 'طلب تعديل بنود العقد المعتمد';
-      contract.status = 'pending_approval';
-      // Reset approvals requiring explicit re-approval from both parties (Requirement 6)
-      contract.firstPartyApprovedAt = undefined;
-      contract.secondPartyApprovedAt = undefined;
-      contract.firstPartyApproval = false;
-      contract.secondPartyApproval = false;
-      if (contract.firstParty) contract.firstParty.signatureStatus = 'pending';
-      if (contract.secondParty) contract.secondParty.signatureStatus = 'pending';
-    }
-
-    const newVersionNum = (contract.currentVersion || 1) + 1;
-    contract.currentVersion = newVersionNum;
-
-    if (updates.clauses) {
-      contract.clauses = updates.clauses;
-    }
-    if (updates.financialTerms) {
-      contract.financialTerms = { ...contract.financialTerms, ...updates.financialTerms };
-    }
-    if (updates.durationTerms) {
-      contract.durationTerms = { ...contract.durationTerms, ...updates.durationTerms };
-    }
-    if (updates.witnesses) {
-      contract.witnesses = updates.witnesses;
-    }
-    if (updates.notes !== undefined) {
-      contract.notes = updates.notes;
-    }
-
-    const nowStr = new Date().toISOString();
-    contract.updatedAt = nowStr.split('T')[0];
-
-    // Push new snapshot to version history (Requirement 5)
-    if (!Array.isArray(contract.versionHistory)) {
-      contract.versionHistory = [];
-    }
-    contract.versionHistory.push({
-      version: newVersionNum,
-      createdAt: nowStr,
-      createdBy: {
-        id: actor.id,
-        name: actor.name,
-        role: actor.role
-      },
-      summaryOfChanges: updates.summaryOfChanges || `تحديث بنود وشروط العقد للإصدار رقم ${newVersionNum}`,
-      clauses: contract.clauses.map(c => ({ ...c })),
-      financialTerms: { ...contract.financialTerms },
-      status: contract.status
-    });
-
-    contract.versions = contract.versionHistory;
-
-    // Log audit log
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'update',
-      targetType: 'contract',
-      targetId: contract.id,
-      targetNumber: contract.contractNumber,
-      details: `تحديث بنود العقد [${contract.contractNumber}] للإصدار (${newVersionNum}) بواسطة [${actor.name}]: ${updates.summaryOfChanges || 'تعديل بنود'}${wasApproved ? ' (تم تعليق الاعتماد لطلب موافقة الطرفين منعاً للتعديل الصامت)' : ''}`,
-      severity: wasApproved ? 'warning' : 'info'
-    });
-
-    if (contract.bookingId) {
-      this.addDealMessage(contract.bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `📝 تم إصدار النسخة (${newVersionNum}) من العقد [${contract.contractNumber}] بواسطة [${actor.name}]. ملخص التعديل: ${updates.summaryOfChanges || 'تعديل بنود وشروط'}${wasApproved ? ' ⚠️ يتطلب إعادة اعتماد الطرفين.' : ''}`
-      });
-    }
-
-    this.persist();
-    this.syncPgContract(contract);
-    return { contract, wasApprovedModified: wasApproved };
+    return contractsRepository.updateContractDraft(contractId, updates, actor);
   }
 
   public approveContract(
@@ -3530,82 +2431,7 @@ class LocalDatabase {
     partyType: 'firstParty' | 'secondParty' | 'admin',
     actor: { id: string; name: string; role: UserRole }
   ): PropertyContract {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    const nowStr = new Date().toISOString();
-    const currVer = contract.currentVersion || 1;
-
-    if (partyType === 'firstParty' || actor.id === contract.firstParty?.id) {
-      contract.firstPartyApprovedAt = nowStr;
-      contract.firstPartyApproval = true;
-      contract.firstPartyApprovedVersion = currVer;
-    } else if (partyType === 'secondParty' || actor.id === contract.secondParty?.id) {
-      contract.secondPartyApprovedAt = nowStr;
-      contract.secondPartyApproval = true;
-      contract.secondPartyApprovedVersion = currVer;
-    } else if (partyType === 'admin') {
-      contract.firstPartyApprovedAt = contract.firstPartyApprovedAt || nowStr;
-      contract.secondPartyApprovedAt = contract.secondPartyApprovedAt || nowStr;
-      contract.firstPartyApproval = true;
-      contract.secondPartyApproval = true;
-      contract.firstPartyApprovedVersion = currVer;
-      contract.secondPartyApprovedVersion = currVer;
-    }
-
-    // REQUIREMENT 2 & 4: Must approve the CURRENT version!
-    const isBothApproved = Boolean(
-      contract.firstPartyApproval &&
-      contract.secondPartyApproval &&
-      contract.firstPartyApprovedVersion === currVer &&
-      contract.secondPartyApprovedVersion === currVer
-    );
-
-    if (isBothApproved || partyType === 'admin') {
-      contract.status = 'approved';
-      contract.approvedAt = nowStr;
-      contract.approvedBy = actor.name;
-      contract.firstPartyApproval = true;
-      contract.secondPartyApproval = true;
-      contract.firstPartyApprovedVersion = currVer;
-      contract.secondPartyApprovedVersion = currVer;
-      contract.isModificationPendingApproval = false;
-      contract.modificationRequestedBy = undefined;
-      contract.modificationReason = undefined;
-    } else {
-      contract.status = 'pending_approval';
-    }
-
-    contract.updatedAt = nowStr.split('T')[0];
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'approve',
-      targetType: 'contract',
-      targetId: contract.id,
-      targetNumber: contract.contractNumber,
-      details: `اعتماد العقد [${contract.contractNumber}] للإصدار (v${currVer}) من قبل [${actor.name}] بصفة [${partyType}]. حالة العقد الحالية: [${contract.status}]`,
-      severity: 'info'
-    });
-
-    if (contract.bookingId) {
-      const partyLabel = partyType === 'firstParty' ? 'الطرف الأول (البائع/المؤجر)' : partyType === 'secondParty' ? 'الطرف الثاني (المشتري/المستأجر)' : 'إدارة النظام';
-      this.addDealMessage(contract.bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `✅ تم اعتماد العقد [${contract.contractNumber}] للإصدار (v${currVer}) من قبل [${partyLabel} - ${actor.name}]. ${contract.status === 'approved' ? '🎉 تم اعتماد العقد رسمياً من كلا الطرفين وبات جاهزاً للتوقيع والتوثيق!' : 'بانتظار اعتماد الطرف المقابل لنفس الإصدار.'}`
-      });
-    }
-
-    this.persist();
-    this.syncPgContract(contract);
-    return contract;
+    return contractsRepository.approveContract(contractId, partyType, actor);
   }
 
   public signContract(
@@ -3620,116 +2446,7 @@ class LocalDatabase {
       legalDisclaimerAcknowledged?: boolean;
     } | string
   ): PropertyContract {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    const parsedOptions = typeof options === 'string' ? { nationalId: options } : (options || {});
-    const nowStr = new Date().toISOString();
-    const currVer = contract.currentVersion || 1;
-    const nationalId = parsedOptions.nationalId || '';
-    const verificationCode = parsedOptions.verificationCode || `OTP-${Math.floor(100000 + Math.random() * 900000)}`;
-    const digitalFingerprint = `SIG-YE-v${currVer}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    if (!Array.isArray(contract.electronicSignatures)) {
-      contract.electronicSignatures = [];
-    }
-
-    // Record formal electronic signature record (Requirement 3)
-    const sigRecord: ElectronicSignatureRecord = {
-      id: `sig-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      partyRole,
-      signerId: actor.id,
-      signerName: actor.name,
-      signerPhone: parsedOptions.signerPhone || (partyRole === 'firstParty' ? contract.firstParty?.phone : contract.secondParty?.phone) || '+967 777 000 000',
-      nationalIdOrPassport: nationalId,
-      idGovernorate: parsedOptions.idGovernorate || contract.propertySnapshot?.governorate || 'صنعاء',
-      contractVersion: currVer,
-      signedAt: nowStr,
-      verificationCode,
-      digitalFingerprint,
-      legalDisclaimerAcknowledged: parsedOptions.legalDisclaimerAcknowledged ?? true,
-      ipAddress: '185.190.22.45'
-    };
-
-    contract.electronicSignatures.push(sigRecord);
-
-    if (partyRole === 'firstParty' || actor.id === contract.firstParty?.id) {
-      if (contract.firstParty) {
-        contract.firstParty.signatureStatus = 'signed';
-        contract.firstParty.signedAt = nowStr;
-        if (nationalId) contract.firstParty.nationalIdOrPassport = nationalId;
-      }
-      contract.firstPartyApprovedAt = contract.firstPartyApprovedAt || nowStr;
-      contract.firstPartyApprovedVersion = currVer;
-      contract.firstPartySignedVersion = currVer;
-    } else if (partyRole === 'secondParty' || actor.id === contract.secondParty?.id) {
-      if (contract.secondParty) {
-        contract.secondParty.signatureStatus = 'signed';
-        contract.secondParty.signedAt = nowStr;
-        if (nationalId) contract.secondParty.nationalIdOrPassport = nationalId;
-      }
-      contract.secondPartyApprovedAt = contract.secondPartyApprovedAt || nowStr;
-      contract.secondPartyApprovedVersion = currVer;
-      contract.secondPartySignedVersion = currVer;
-    } else if (partyRole === 'witness') {
-      const wit = contract.witnesses?.find(w => w.id === actor.id || w.name.includes(actor.name));
-      if (wit) {
-        wit.signatureStatus = 'signed';
-        wit.signedAt = nowStr;
-      }
-    }
-
-    // REQUIREMENT 3 & 4: Both parties must have signed the current version!
-    const bothSignedCurrent = Boolean(
-      contract.firstParty?.signatureStatus === 'signed' &&
-      contract.secondParty?.signatureStatus === 'signed' &&
-      contract.firstPartySignedVersion === currVer &&
-      contract.secondPartySignedVersion === currVer
-    );
-
-    if (bothSignedCurrent) {
-      contract.status = 'signed';
-      contract.signedAt = nowStr;
-      contract.approvedAt = contract.approvedAt || nowStr;
-      contract.approvedBy = contract.approvedBy || actor.name;
-
-      if (contract.bookingId) {
-        const booking = this.getBookingById(contract.bookingId);
-        if (booking) {
-          booking.dealStage = 'contract_completed';
-        }
-      }
-    }
-
-    contract.updatedAt = nowStr.split('T')[0];
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'approve',
-      targetType: 'contract',
-      targetId: contract.id,
-      targetNumber: contract.contractNumber,
-      details: `توقيع إلكتروني موثق على العقد [${contract.contractNumber}] للإصدار (v${currVer}) بواسطة [${actor.name}] كـ [${partyRole}]. البصمة الرقمية: [${digitalFingerprint}]`,
-      severity: 'info'
-    });
-
-    if (contract.bookingId) {
-      this.addDealMessage(contract.bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `✍️ قام [${actor.name}] بالتوقيع الإلكتروني المعتمد على العقد [${contract.contractNumber}] للإصدار (v${currVer}). بصمة التوقيع: [${digitalFingerprint}]. ${bothSignedCurrent ? '🏆 اكتمل توقيع الطرفين على العقد رسمياً وأصبح جاهزاً للطباعة ومحضر الإغلاق النهائي!' : 'بانتظار توقيع الطرف الآخر لنفس الإصدار.'}`
-      });
-    }
-
-    this.persist();
-    this.syncPgContract(contract);
-    return contract;
+    return contractsRepository.signContract(contractId, partyRole, actor, options);
   }
 
   public proposeContractAmendment(
@@ -3737,74 +2454,7 @@ class LocalDatabase {
     amendment: { summaryOfChanges: string; clauses?: ContractClause[]; financialTerms?: any },
     actor: { id: string; name: string; role: UserRole }
   ): PropertyContract {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    contract.isModificationPendingApproval = true;
-    contract.modificationRequestedBy = actor.name;
-    contract.modificationReason = amendment.summaryOfChanges;
-    contract.status = 'pending_approval';
-
-    // Reset approvals to require re-approval
-    contract.firstPartyApprovedAt = actor.id === contract.firstParty?.id ? new Date().toISOString() : undefined;
-    contract.secondPartyApprovedAt = actor.id === contract.secondParty?.id ? new Date().toISOString() : undefined;
-
-    const newVersionNum = (contract.currentVersion || 1) + 1;
-    contract.currentVersion = newVersionNum;
-
-    if (amendment.clauses) {
-      contract.clauses = amendment.clauses;
-    }
-    if (amendment.financialTerms) {
-      contract.financialTerms = { ...contract.financialTerms, ...amendment.financialTerms };
-    }
-
-    const nowStr = new Date().toISOString();
-    contract.updatedAt = nowStr.split('T')[0];
-
-    if (!Array.isArray(contract.versionHistory)) {
-      contract.versionHistory = [];
-    }
-    contract.versionHistory.push({
-      version: newVersionNum,
-      createdAt: nowStr,
-      createdBy: {
-        id: actor.id,
-        name: actor.name,
-        role: actor.role
-      },
-      summaryOfChanges: `طلب تعديل عقد معتمد: ${amendment.summaryOfChanges}`,
-      clauses: contract.clauses,
-      financialTerms: contract.financialTerms,
-      status: 'pending_approval'
-    });
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'update',
-      targetType: 'contract',
-      targetId: contract.id,
-      targetNumber: contract.contractNumber,
-      details: `اقتراح تعديل على العقد المعتمد [${contract.contractNumber}] للإصدار (${newVersionNum}) بواسطة [${actor.name}]: ${amendment.summaryOfChanges}`,
-      severity: 'warning'
-    });
-
-    if (contract.bookingId) {
-      this.addDealMessage(contract.bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `⚠️ اقترح [${actor.name}] تعديلاً على بنود العقد [${contract.contractNumber}] (النسخة ${newVersionNum}). سبب التعديل: ${amendment.summaryOfChanges}. يتطلب موافقة الطرف الآخر للاعتماد.`
-      });
-    }
-
-    this.persist();
-    return contract;
+    return contractsRepository.proposeContractAmendment(contractId, amendment, actor);
   }
 
   public respondToContractAmendment(
@@ -3813,77 +2463,7 @@ class LocalDatabase {
     actor: { id: string; name: string; role: UserRole },
     reason?: string
   ): PropertyContract {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    const nowStr = new Date().toISOString();
-
-    if (accept) {
-      // Counter-party accepted the amendment
-      contract.isModificationPendingApproval = false;
-      contract.status = 'approved';
-      contract.approvedAt = nowStr;
-      contract.approvedBy = actor.name;
-      if (actor.id === contract.firstParty?.id) {
-        contract.firstPartyApprovedAt = nowStr;
-      } else if (actor.id === contract.secondParty?.id) {
-        contract.secondPartyApprovedAt = nowStr;
-      }
-
-      this.logAudit({
-        actorId: actor.id,
-        actorName: actor.name,
-        actorRole: actor.role,
-        action: 'approve',
-        targetType: 'contract',
-        targetId: contract.id,
-        targetNumber: contract.contractNumber,
-        details: `قبول التعديل المقترح على العقد [${contract.contractNumber}] بواسطة [${actor.name}]`,
-        severity: 'info'
-      });
-
-      if (contract.bookingId) {
-        this.addDealMessage(contract.bookingId, {
-          senderId: 'system',
-          senderName: 'نظام دلنّي العقاري',
-          senderRole: 'system_admin',
-          type: 'system',
-          text: `🤝 وافق [${actor.name}] على التعديلات المقترحة على العقد [${contract.contractNumber}]. تم اعتماد النسخة (${contract.currentVersion}) رسمياً.`
-        });
-      }
-    } else {
-      // Rejected amendment: rollback or cancel amendment flag
-      contract.isModificationPendingApproval = false;
-      contract.status = 'under_review';
-
-      this.logAudit({
-        actorId: actor.id,
-        actorName: actor.name,
-        actorRole: actor.role,
-        action: 'reject',
-        targetType: 'contract',
-        targetId: contract.id,
-        targetNumber: contract.contractNumber,
-        details: `رفض التعديل المقترح على العقد [${contract.contractNumber}] بواسطة [${actor.name}]. السبب: ${reason || 'عدم الاتفاق'}`,
-        severity: 'warning'
-      });
-
-      if (contract.bookingId) {
-        this.addDealMessage(contract.bookingId, {
-          senderId: 'system',
-          senderName: 'نظام دلنّي العقاري',
-          senderRole: 'system_admin',
-          type: 'system',
-          text: `❌ رفض [${actor.name}] التعديل المقترح على العقد [${contract.contractNumber}]. ملاحظات: ${reason || 'لم يتم قبول الشروط المعدلة'}.`
-        });
-      }
-    }
-
-    contract.updatedAt = nowStr.split('T')[0];
-    this.persist();
-    return contract;
+    return contractsRepository.respondToContractAmendment(contractId, accept, actor, reason);
   }
 
   public cancelContract(
@@ -3891,39 +2471,7 @@ class LocalDatabase {
     reason: string,
     actor: { id: string; name: string; role: UserRole }
   ): PropertyContract {
-    const contract = this.getContractById(contractId);
-    if (!contract) {
-      throw new Error('العقد غير موجود');
-    }
-
-    contract.status = 'cancelled';
-    contract.notes = `${contract.notes ? contract.notes + '\n' : ''}تم إلغاء العقد بواسطة [${actor.name}]. السبب: ${reason}`;
-    contract.updatedAt = new Date().toISOString().split('T')[0];
-
-    this.logAudit({
-      actorId: actor.id,
-      actorName: actor.name,
-      actorRole: actor.role,
-      action: 'reject',
-      targetType: 'contract',
-      targetId: contract.id,
-      targetNumber: contract.contractNumber,
-      details: `إلغاء العقد [${contract.contractNumber}] بواسطة [${actor.name}]. السبب: ${reason}`,
-      severity: 'warning'
-    });
-
-    if (contract.bookingId) {
-      this.addDealMessage(contract.bookingId, {
-        senderId: 'system',
-        senderName: 'نظام دلنّي العقاري',
-        senderRole: 'system_admin',
-        type: 'system',
-        text: `❌ تم إلغاء مسودة العقد [${contract.contractNumber}] بواسطة [${actor.name}]. السبب: ${reason}`
-      });
-    }
-
-    this.persist();
-    return contract;
+    return contractsRepository.cancelContract(contractId, reason, actor);
   }
 }
 
